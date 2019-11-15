@@ -523,6 +523,8 @@ AS_IF(
 AS_CASE([$ocaml_cv_cc_vendor],
   [xlc-*],
     [outputobj='-o $(EMPTY)'; gcc_warnings="-qflag=i:i"], # all warnings enabled
+  [sunc-*],
+  [outputobj='-o $(EMPTY)'; gcc_warnings=""], # all warnings enabled
   [msvc-*],
     [outputobj=-Fo; gcc_warnings=""],
   [outputobj='-o $(EMPTY)'; AS_CASE([AC_PACKAGE_VERSION],
@@ -587,6 +589,9 @@ AS_CASE([$host],
       internal_cppflags="${internal_cppflags}\$(WINDOWS_UNICODE)"],
     [xlc-*],
       [common_cflags="-O5 -qtune=balanced -qnoipa -qinline $CFLAGS";
+      internal_cflags="$gcc_warnings"],
+    [sunc-*],
+      [common_cflags="-O2 -xc99=all $CFLAGS";
       internal_cflags="$gcc_warnings"],
     [common_cflags="-O"])])
 
@@ -790,9 +795,14 @@ AS_IF([test x"$enable_shared" != "xno"],
       mkmaindll="$flexlink -maindll"
       shared_libraries_supported=true],
     [powerpc-ibm-aix*],
-      [AS_CASE([$CC],
+      [AS_CASE([$ocaml_cv_cc_vendor],
                [xlc*],
                [mksharedlib="$CC -qmkshrobj -G"
+                shared_libraries_supported=true])],
+    [sparc-sun-solaris*],
+      [AS_CASE([$ocaml_cv_cc_vendor],
+               [sunc*],
+               [mksharedlib="$CC -G"
                 shared_libraries_supported=true])],
     [[*-*-linux*|*-*-freebsd[3-9]*|*-*-freebsd[1-9][0-9]*\
     |*-*-openbsd*|*-*-netbsd*|*-*-dragonfly*|*-*-gnu*|*-*-haiku*]],
@@ -1082,12 +1092,13 @@ AC_CHECK_FUNC([issetugid], [AC_DEFINE([HAS_ISSETUGID])])
 
 ## clock_gettime, for the instrumented runtime
 
-## Note: on MinGW, configure finds a clock_gettime and thus the build
+## Note: on MinGW and SunC/Solaris, configure finds a clock_gettime and thus the build
 # system tries to build the instrumented runtime, which causes
-# warnings. For the moment we simply disable it on MinGW
+# warnings. For the moment we simply disable it on MinGW and SunC/Solaris
 # but this would need to be further investigated
 AS_CASE([$host],
   [*-*-mingw32], [instrumented_runtime=false],
+  [*-*-solaris*], [instrumented_runtime=false],
   [AS_IF([test "x$enable_instrumented_runtime" = "xno" ],
     [instrumented_runtime=false; instrumented_runtime_libs=""],
     [
@@ -1114,6 +1125,9 @@ sockets=false
 AS_CASE([$host],
   [*-*-mingw32|*-pc-windows],
     [cclibs="$cclibs -lws2_32"
+    sockets=true],
+  [*-*-solaris*],
+    [cclibs="$cclibs -lsocket -lnsl"
     sockets=true],
   [
     AC_CHECK_FUNC([socket])
@@ -1331,10 +1345,11 @@ AC_CHECK_HEADER([sys/mman.h],
 AC_CHECK_FUNC([pwrite], [AC_DEFINE([HAS_PWRITE])])
 
 ## -fdebug-prefix-map support by the C compiler
-AS_CASE([$CC,$host],
+AS_CASE([$ocaml_cv_cc_vendor,$host],
   [*,*-*-mingw32], [cc_has_debug_prefix_map=false],
   [*,*-pc-windows], [cc_has_debug_prefix_map=false],
   [xlc*,powerpc-ibm-aix*], [cc_has_debug_prefix_map=false],
+  [sunc*,sparc-sun-*], [cc_has_debug_prefix_map=false],
   [OCAML_CC_HAS_DEBUG_PREFIX_MAP])
 
 ## Does stat support nanosecond precision
