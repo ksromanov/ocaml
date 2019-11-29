@@ -1010,7 +1010,9 @@ let rec is_reccall all_candidates = function
   | Lapply { ap_func = Lvar id; ap_args; ap_loc} ->
       begin try
         let stub = List.assoc id all_candidates in
-        if not stub.stub_body.attr.trmc_candidate && not stub.stub_warned then
+        let is_full_ap = stub.stub_arity = List.length ap_args in
+        if not stub.stub_body.attr.trmc_candidate && not stub.stub_warned
+            && is_full_ap then
           begin
             Location.prerr_warning ap_loc
               Warnings.Potential_trmc_call;
@@ -1018,7 +1020,7 @@ let rec is_reccall all_candidates = function
           end;
         if not (stub.stub_body.attr.trmc_candidate || !Clflags.force_trmc) then
           raise Not_found;
-        if stub.stub_arity = List.length ap_args
+        if is_full_ap
         then Some (id, stub)
         else None
       with Not_found -> None
