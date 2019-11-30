@@ -678,6 +678,7 @@ let rec symm : type a1 b1 c1 d1 e1 f1 a2 b2 c2 d2 e2 f2 .
   | Format_subst_ty (ty1, ty2, rest) ->
     Format_subst_ty (ty2, ty1, symm rest)
   | End_of_fmtty -> End_of_fmtty
+  [@@trmc]
 
 let rec fmtty_rel_det : type a1 b c d1 e1 f1 a2 d2 e2 f2 .
   (a1, b, c, d1, e1, f1,
@@ -849,6 +850,7 @@ and trans : type
   | End_of_fmtty, End_of_fmtty -> End_of_fmtty
   | End_of_fmtty, _ -> assert false
   | _, End_of_fmtty -> assert false
+  [@@trmc]
 
 let rec fmtty_of_formatting_gen : type a b c d e f .
   (a, b, c, d, e, f) formatting_gen ->
@@ -914,6 +916,7 @@ fun fmtty -> match fmtty with
     concat_fmtty (fmtty_of_formatting_gen fmting_gen) (fmtty_of_fmt rest)
 
   | End_of_format              -> End_of_fmtty
+  [@@trmc]
 
 and fmtty_of_custom : type x y a b c d e f .
   (a, x, y) custom_arity -> (a, b, c, d, e, f) fmtty ->
@@ -921,6 +924,7 @@ and fmtty_of_custom : type x y a b c d e f .
 fun arity fmtty -> match arity with
   | Custom_zero -> fmtty
   | Custom_succ arity -> Any_ty (fmtty_of_custom arity fmtty)
+  [@@trmc]
 
 (* Extract the fmtty of an ignored parameter followed by the rest of
    the format. *)
@@ -1133,6 +1137,7 @@ and type_format_gen :
   | End_of_format, fmtty_rest -> Fmt_fmtty_EBB (End_of_format, fmtty_rest)
 
   | _ -> raise Type_mismatch
+  [@@trmc]
 
 and type_formatting_gen : type a1 a3 b1 b3 c1 c3 d1 d3 e1 e2 e3 f1 f2 f3 .
     (a1, b1, c1, d1, e1, f1) formatting_gen ->
