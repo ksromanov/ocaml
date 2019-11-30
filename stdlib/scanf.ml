@@ -1455,6 +1455,7 @@ fun ib fmt readers -> match fmt with
 
   | End_of_format ->
     Nil
+  [@@trmc]
 
 (* Case analysis on padding and precision. *)
 (* Reject formats containing "%*" or "%.*". *)
