@@ -350,7 +350,9 @@ let format_pp_token state size = function
     | Some (Pp_tbox tabs) ->
       let rec add_tab n = function
         | [] -> [n]
-        | x :: l as ls -> if n < x then n :: ls else x :: add_tab n l in
+        | x :: l as ls -> if n < x then n :: ls else x :: add_tab n l
+        [@@trmc]
+      in
       tabs := add_tab (state.pp_margin - state.pp_space_left) !tabs
     end
 
