@@ -17,7 +17,6 @@ ROOTDIR=../..
 
 include $(ROOTDIR)/Makefile.config
 include $(ROOTDIR)/Makefile.common
-include $(ROOTDIR)/Makefile.best_binaries
 
 OC_CFLAGS += $(SHAREDLIB_CFLAGS)
 
@@ -30,9 +29,8 @@ CAMLRUN ?= $(ROOTDIR)/boot/ocamlrun
 
 LIBS = -nostdlib -I $(ROOTDIR)/stdlib -I $(ROOTDIR)/otherlibs/$(UNIXLIB)
 
-CAMLC=$(BEST_OCAMLC) $(LIBS)
-CAMLOPT=$(BEST_OCAMLOPT) $(LIBS)
-
+CAMLC=$(CAMLRUN) $(ROOTDIR)/ocamlc $(LIBS)
+CAMLOPT=$(CAMLRUN) $(ROOTDIR)/ocamlopt $(LIBS)
 MKLIB=$(CAMLRUN) $(ROOTDIR)/tools/ocamlmklib
 COMPFLAGS=-w +33..39 -warn-error A -g -bin-annot -safe-string
 ifeq "$(FLAMBDA)" "true"
