@@ -1194,9 +1194,10 @@ let transl_store_structure glob map prims aliases str =
                           transl_store rootpath (add_idents true ids subst) cont
                             rem
                       | id :: idl ->
+                          let stored_ident = store_ident loc id in
                           Llet(Alias, Pgenval, id, Lprim(Pfield pos, [Lvar mid],
                                                          loc),
-                               Lsequence(store_ident loc id,
+                               Lsequence(stored_ident,
                                          store_idents (pos + 1) idl))
                     in
                     Llet(pure, Pgenval, mid,
