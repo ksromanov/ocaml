@@ -1,0 +1,176 @@
+[
+  structure_item (with_locations_byte.ml[8,177+0]..[10,215+34])
+    Pstr_value Rec
+    [
+      <def>
+        pattern (with_locations_byte.ml[8,177+8]..[8,177+11])
+          Ppat_var "fib" (with_locations_byte.ml[8,177+8]..[8,177+11])
+        expression (with_locations_byte.ml[8,177+14]..[10,215+34])
+          Pexp_function
+          [
+            <case>
+              pattern (with_locations_byte.ml[9,200+4]..[9,200+9])
+                Ppat_or
+                pattern (with_locations_byte.ml[9,200+4]..[9,200+5])
+                  Ppat_constant PConst_int (0,None)
+                pattern (with_locations_byte.ml[9,200+8]..[9,200+9])
+                  Ppat_constant PConst_int (1,None)
+              expression (with_locations_byte.ml[9,200+13]..[9,200+14])
+                Pexp_constant PConst_int (1,None)
+            <case>
+              pattern (with_locations_byte.ml[10,215+4]..[10,215+5])
+                Ppat_var "n" (with_locations_byte.ml[10,215+4]..[10,215+5])
+              expression (with_locations_byte.ml[10,215+9]..[10,215+34])
+                Pexp_apply
+                expression (with_locations_byte.ml[10,215+21]..[10,215+22])
+                  Pexp_ident "+" (with_locations_byte.ml[10,215+21]..[10,215+22])
+                [
+                  <arg>
+                  Nolabel
+                    expression (with_locations_byte.ml[10,215+9]..[10,215+20])
+                      Pexp_apply
+                      expression (with_locations_byte.ml[10,215+9]..[10,215+12])
+                        Pexp_ident "fib" (with_locations_byte.ml[10,215+9]..[10,215+12])
+                      [
+                        <arg>
+                        Nolabel
+                          expression (with_locations_byte.ml[10,215+13]..[10,215+20])
+                            Pexp_apply
+                            expression (with_locations_byte.ml[10,215+16]..[10,215+17])
+                              Pexp_ident "-" (with_locations_byte.ml[10,215+16]..[10,215+17])
+                            [
+                              <arg>
+                              Nolabel
+                                expression (with_locations_byte.ml[10,215+14]..[10,215+15])
+                                  Pexp_ident "n" (with_locations_byte.ml[10,215+14]..[10,215+15])
+                              <arg>
+                              Nolabel
+                                expression (with_locations_byte.ml[10,215+18]..[10,215+19])
+                                  Pexp_constant PConst_int (1,None)
+                            ]
+                      ]
+                  <arg>
+                  Nolabel
+                    expression (with_locations_byte.ml[10,215+23]..[10,215+34])
+                      Pexp_apply
+                      expression (with_locations_byte.ml[10,215+23]..[10,215+26])
+                        Pexp_ident "fib" (with_locations_byte.ml[10,215+23]..[10,215+26])
+                      [
+                        <arg>
+                        Nolabel
+                          expression (with_locations_byte.ml[10,215+27]..[10,215+34])
+                            Pexp_apply
+                            expression (with_locations_byte.ml[10,215+30]..[10,215+31])
+                              Pexp_ident "-" (with_locations_byte.ml[10,215+30]..[10,215+31])
+                            [
+                              <arg>
+                              Nolabel
+                                expression (with_locations_byte.ml[10,215+28]..[10,215+29])
+                                  Pexp_ident "n" (with_locations_byte.ml[10,215+28]..[10,215+29])
+                              <arg>
+                              Nolabel
+                                expression (with_locations_byte.ml[10,215+32]..[10,215+33])
+                                  Pexp_constant PConst_int (2,None)
+                            ]
+                      ]
+                ]
+          ]
+    ]
+]
+
+let rec fib = function | 0|1 -> 1 | n -> (fib (n - 1)) + (fib (n - 2))
+[
+  structure_item (with_locations_byte.ml[8,177+0]..with_locations_byte.ml[10,215+34])
+    Tstr_value Rec
+    [
+      <def>
+        pattern (with_locations_byte.ml[8,177+8]..with_locations_byte.ml[8,177+11])
+          Tpat_var "fib/80"
+        expression (with_locations_byte.ml[8,177+14]..with_locations_byte.ml[10,215+34])
+          Texp_function
+          Nolabel
+          [
+            <case>
+              pattern (with_locations_byte.ml[9,200+4]..with_locations_byte.ml[9,200+9])
+                Tpat_or
+                pattern (with_locations_byte.ml[9,200+4]..with_locations_byte.ml[9,200+5])
+                  Tpat_constant Const_int 0
+                pattern (with_locations_byte.ml[9,200+8]..with_locations_byte.ml[9,200+9])
+                  Tpat_constant Const_int 1
+              expression (with_locations_byte.ml[9,200+13]..with_locations_byte.ml[9,200+14])
+                Texp_constant Const_int 1
+            <case>
+              pattern (with_locations_byte.ml[10,215+4]..with_locations_byte.ml[10,215+5])
+                Tpat_var "n/81"
+              expression (with_locations_byte.ml[10,215+9]..with_locations_byte.ml[10,215+34])
+                Texp_apply
+                expression (with_locations_byte.ml[10,215+21]..with_locations_byte.ml[10,215+22])
+                  Texp_ident "Stdlib!.+"
+                [
+                  <arg>
+                    Nolabel
+                    expression (with_locations_byte.ml[10,215+9]..with_locations_byte.ml[10,215+20])
+                      Texp_apply
+                      expression (with_locations_byte.ml[10,215+9]..with_locations_byte.ml[10,215+12])
+                        Texp_ident "fib/80"
+                      [
+                        <arg>
+                          Nolabel
+                          expression (with_locations_byte.ml[10,215+13]..with_locations_byte.ml[10,215+20])
+                            Texp_apply
+                            expression (with_locations_byte.ml[10,215+16]..with_locations_byte.ml[10,215+17])
+                              Texp_ident "Stdlib!.-"
+                            [
+                              <arg>
+                                Nolabel
+                                expression (with_locations_byte.ml[10,215+14]..with_locations_byte.ml[10,215+15])
+                                  Texp_ident "n/81"
+                              <arg>
+                                Nolabel
+                                expression (with_locations_byte.ml[10,215+18]..with_locations_byte.ml[10,215+19])
+                                  Texp_constant Const_int 1
+                            ]
+                      ]
+                  <arg>
+                    Nolabel
+                    expression (with_locations_byte.ml[10,215+23]..with_locations_byte.ml[10,215+34])
+                      Texp_apply
+                      expression (with_locations_byte.ml[10,215+23]..with_locations_byte.ml[10,215+26])
+                        Texp_ident "fib/80"
+                      [
+                        <arg>
+                          Nolabel
+                          expression (with_locations_byte.ml[10,215+27]..with_locations_byte.ml[10,215+34])
+                            Texp_apply
+                            expression (with_locations_byte.ml[10,215+30]..with_locations_byte.ml[10,215+31])
+                              Texp_ident "Stdlib!.-"
+                            [
+                              <arg>
+                                Nolabel
+                                expression (with_locations_byte.ml[10,215+28]..with_locations_byte.ml[10,215+29])
+                                  Texp_ident "n/81"
+                              <arg>
+                                Nolabel
+                                expression (with_locations_byte.ml[10,215+32]..with_locations_byte.ml[10,215+33])
+                                  Texp_constant Const_int 2
+                            ]
+                      ]
+                ]
+          ]
+    ]
+]
+
+(setglobal With_locations_byte!
+  (letrec
+    (fib/80
+       (function n/81[int] : int
+         (funct-body with_locations_byte.ml(8):191-249
+           (if (isout 1 n/81)
+             (before with_locations_byte.ml(10):224-249
+               (+
+                 (after with_locations_byte.ml(10):224-235
+                   (apply fib/80 (- n/81 1)))
+                 (after with_locations_byte.ml(10):238-249
+                   (apply fib/80 (- n/81 2)))))
+             (before with_locations_byte.ml(9):213-214 1)))))
+    (pseudo _none_(0)<ghost>:-1--1 (makeblock 0 fib/80))))
