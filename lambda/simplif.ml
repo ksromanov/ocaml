@@ -997,14 +997,9 @@ type trmc_stub = {
   mutable stub_frozen: bool; (* true if no new function should be generated *)
 }
 
-let rec list_last = function
-  | [] -> invalid_arg "list_last"
-  | [x] -> x
-  | _ :: xs -> list_last xs
-
 (* Detection of trmc calls *)
 
-let rec is_reccall all_candidates = function
+let rec find_reccall all_candidates = function
   | Lapply { ap_func = Lvar id; ap_args } ->
       begin try
         let stub = List.assoc id all_candidates in
@@ -1015,28 +1010,34 @@ let rec is_reccall all_candidates = function
         else None
       with Not_found -> None
       end
-  | Levent (lam,_) -> is_reccall all_candidates lam
+  | Levent (lam,_) -> find_reccall all_candidates lam
   | _ -> None
 
-and is_trmc_call all_candidates = function
-  | Lprim (Pmakeblock _, [], _) -> false
+and is_reccall all_candidates lam =
+  match find_reccall all_candidates lam with
+    | Some _ -> true
+    | None -> false
+
+and is_direct_trmc_call all_candidates = function
   | Lprim (Pmakeblock _, values, _) ->
-      begin match is_reccall all_candidates (list_last values) with
-      | Some _ -> true
-      | None -> false
-      end
-  | _ -> false
+     List.exists (is_reccall all_candidates) values
+  | _ ->
+     false
+
+and has_direct_trmc all_candidates = function
+  | Levent(lam, _) -> has_direct_trmc all_candidates lam
+  | lam -> is_direct_trmc_call all_candidates lam
 
 and has_trmc all_candidates lam =
-  is_trmc_call all_candidates lam ||
-  (match lam with
-   | Levent (lam,_) -> has_trmc all_candidates lam
-   | Lprim (Pmakeblock _, [], _) -> false
-   | Lprim (Pmakeblock _, values, _) ->
-       has_trmc all_candidates (list_last values)
-   | _ -> false)
+  has_direct_trmc all_candidates lam
+  ||
+  match lam with
+    | Levent(lam, _) -> has_trmc all_candidates lam
+    | Lprim (Pmakeblock _, values, _) ->
+       List.exists (has_trmc all_candidates) values
+    | _ -> false
 
-and need_recfunc (id,stub) offset =
+let rec specialize_trmc (id,stub) ~offset =
   try List.assoc offset stub.stub_uses
   with Not_found ->
     assert (not stub.stub_frozen);
@@ -1047,11 +1048,11 @@ and need_recfunc (id,stub) offset =
 
 and extract_reccall all_candidates acc = function
   | arg :: args ->
-      begin match is_reccall all_candidates arg with
+      begin match find_reccall all_candidates arg with
       | None -> extract_reccall all_candidates (arg :: acc) args
       | Some candidate ->
           let offset = List.length acc in
-          need_recfunc candidate offset, arg,
+          specialize_trmc candidate ~offset, arg,
           List.rev_append acc (trmc_placeholder :: args)
       end
   | [] -> assert false
@@ -1063,7 +1064,7 @@ and extract_direct_trmc all_candidates = function
   | _ -> assert false
 
 and extract_trmc all_candidates name lam =
-  if is_trmc_call all_candidates lam then
+  if is_direct_trmc_call all_candidates lam then
     let result = extract_direct_trmc all_candidates lam in
     result, Lvar name
   else match lam with
@@ -1076,13 +1077,13 @@ and extract_trmc all_candidates name lam =
     | _ -> assert false
 
 and extract_trmc_list all_candidates name acc = function
-  | [arg] ->
-      assert (has_trmc all_candidates arg);
-      let result, arg' = extract_trmc all_candidates name arg in
-      result, List.rev_append acc [arg']
-  | arg :: args ->
-      extract_trmc_list all_candidates name (arg :: acc) args
   | [] -> assert false
+  | arg :: args ->
+     if not (has_trmc all_candidates arg)
+     then extract_trmc_list all_candidates name (arg :: acc) args
+     else
+       let (result, arg') = extract_trmc all_candidates name arg in
+       result, List.rev_append acc (arg' :: args)
 
 (* Rewriting of trmc calls *)
 
