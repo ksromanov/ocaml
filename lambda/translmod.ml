@@ -956,7 +956,7 @@ let field_of_str loc str =
 
 let transl_store_structure glob map prims aliases str =
   let no_env_update _ _ env = env in
-  let rec transl_store rootpath subst cont = function
+  let[@trmc] rec transl_store rootpath subst cont = function
     [] ->
       transl_store_subst := subst;
       Lambda.subst no_env_update subst cont
@@ -1145,7 +1145,7 @@ let transl_store_structure glob map prims aliases str =
             let modl = incl.incl_mod in
             let mid = Ident.create_local "include" in
             let loc = incl.incl_loc in
-            let rec store_idents_include pos = function
+            let[@trmc] rec store_idents_include pos = function
               | [] ->
                 transl_store rootpath (add_idents true ids subst) cont rem
               | id :: idl ->
@@ -1208,7 +1208,7 @@ let transl_store_structure glob map prims aliases str =
         | Tstr_attribute _ ->
             transl_store rootpath subst cont rem
 
-  and store_ident loc id =
+  and[@trmc] store_ident loc id =
     try
       let (pos, cc) = Ident.find_same id map in
       let init_val = apply_coercion loc Alias cc (Lvar id) in
