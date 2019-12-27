@@ -1143,27 +1143,33 @@ let rec introduce_trmc all_candidates bindings =
       Lprim (Psetfield (offset, Pointer, Heap_initialization),
              [Lvar caller_block; lam], Location.none)
     in
+    let rec rewrite_call new_func dst_block = function
+      | Levent (lam, lev) ->
+         Levent (rewrite_call new_func dst_block lam, lev)
+      | Lapply apply ->
+         let ap_func = Lvar new_func in
+         let ap_args = Lvar dst_block :: apply.ap_args in
+         Lapply {apply with ap_func; ap_args}
+      | _ -> assert false
+    in
     let on_tail lam =
       if has_trmc all_candidates lam then
         let name_block = Ident.create_local "trmc_block" in
         let (func, old_app, value_block), value_result =
           extract_trmc all_candidates name_block lam
         in
-        let rec map_app = function
-          | Levent (lam, lev) -> Levent (map_app lam, lev)
-          | Lapply apply  ->
-              let ap_func = Lvar func in
-              let ap_args = Lvar name_block :: apply.ap_args in
-              Lapply {apply with ap_func; ap_args}
-          | _ -> assert false
-        in
-        let new_app = map_app old_app in
+        let new_app = rewrite_call func name_block old_app in
         Llet (Strict, Pgenval, name_block, value_block,
               Lsequence (
                 Lprim (Psetfield (offset, Pointer, Heap_initialization),
                        [Lvar caller_block; value_result], Location.none),
                 new_app))
-      else on_return lam
+      else match find_reccall all_candidates lam with
+           | None ->
+              on_return lam
+           | Some tailcall ->
+             let func = specialize_trmc tailcall ~offset in
+             rewrite_call func caller_block lam
     in
     let body = map_exits ~on_return:(map_return on_return) ~on_tail lfun.body in
     let param = (caller_block, Pgenval) in
