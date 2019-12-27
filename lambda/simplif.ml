@@ -993,7 +993,7 @@ let trmc_placeholder = Lconst (Const_base (Const_int 0))
 type trmc_stub = {
   stub_arity: int;
   stub_body: lfunction;
-  mutable stub_uses: (int * Ident.t) list;
+  mutable stub_uses: (int * Ident.t) list; (* offset * specialized function_name *)
   mutable stub_frozen: bool; (* true if no new function should be generated *)
 }
 
