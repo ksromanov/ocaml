@@ -1145,18 +1145,18 @@ let transl_store_structure glob map prims aliases str =
             let modl = incl.incl_mod in
             let mid = Ident.create_local "include" in
             let loc = incl.incl_loc in
-            let rec store_idents pos = function
+            let rec store_idents_include pos = function
               | [] ->
                 transl_store rootpath (add_idents true ids subst) cont rem
               | id :: idl ->
                   Llet(Alias, Pgenval, id, Lprim(Pfield pos, [Lvar mid], loc),
                        Lsequence(store_ident loc id,
-                                 store_idents (pos + 1) idl))
+                                 store_idents_include (pos + 1) idl))
             in
             Llet(Strict, Pgenval, mid,
                  Lambda.subst no_env_update subst
                    (transl_module Tcoerce_none None modl),
-                 store_idents 0 ids)
+                 store_idents_include 0 ids)
         | Tstr_open od ->
             begin match od.open_expr.mod_desc with
             | Tmod_structure str ->
@@ -1166,16 +1166,16 @@ let transl_store_structure glob map prims aliases str =
                 let ids = Array.of_list (defined_idents str.str_items) in
                 let ids0 = bound_value_identifiers od.open_bound_items in
                 let subst = !transl_store_subst in
-                let rec store_idents pos = function
+                let rec store_idents_open_structure pos = function
                   | [] ->
                     transl_store rootpath (add_idents true ids0 subst) cont rem
                   | id :: idl ->
                       Llet(Alias, Pgenval, id, Lvar ids.(pos),
                            Lsequence(store_ident od.open_loc id,
-                                     store_idents (pos + 1) idl))
+                                     store_idents_open_structure (pos + 1) idl))
                 in
                 Lsequence(lam, Lambda.subst no_env_update subst
-                                 (store_idents 0 ids0))
+                                 (store_idents_open_structure 0 ids0))
             | _ ->
                 let pure = pure_module od.open_expr in
                 (* this optimization shouldn't be needed because Simplif would
@@ -1188,7 +1188,7 @@ let transl_store_structure glob map prims aliases str =
                     let ids = bound_value_identifiers od.open_bound_items in
                     let mid = Ident.create_local "open" in
                     let loc = od.open_loc in
-                    let rec store_idents pos = function
+                    let rec store_idents_open pos = function
                         [] ->
                           transl_store rootpath (add_idents true ids subst) cont
                             rem
@@ -1196,12 +1196,12 @@ let transl_store_structure glob map prims aliases str =
                           Llet(Alias, Pgenval, id, Lprim(Pfield pos, [Lvar mid],
                                                          loc),
                                Lsequence(store_ident loc id,
-                                         store_idents (pos + 1) idl))
+                                         store_idents_open (pos + 1) idl))
                     in
                     Llet(pure, Pgenval, mid,
                          Lambda.subst no_env_update subst
                            (transl_module Tcoerce_none None od.open_expr),
-                         store_idents 0 ids)
+                         store_idents_open 0 ids)
           end
         | Tstr_modtype _
         | Tstr_class_type _
