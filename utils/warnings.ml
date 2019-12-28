@@ -94,7 +94,6 @@ type t =
   | Unused_functor_parameter of string      (* 67 *)
   | Invalid_trmc_attribute                  (* 68 *)
   | Unused_trmc_attribute                   (* 69 *)
-  | Potential_trmc_call                     (* 70 *)
 ;;
 
 (* If you remove a warning, leave a hole in the numbering.  NEVER change
@@ -175,10 +174,9 @@ let number = function
   | Unused_functor_parameter _ -> 67
   | Invalid_trmc_attribute -> 68
   | Unused_trmc_attribute -> 69
-  | Potential_trmc_call -> 70
 ;;
 
-let last_warning_number = 70
+let last_warning_number = 69
 ;;
 
 (* Must be the max number returned by the [number] function. *)
@@ -400,7 +398,7 @@ let parse_options errflag s =
   current := {(!current) with error; active}
 
 (* If you change these, don't forget to change them in man/ocamlc.m *)
-let defaults_w = "+a-4-6-7-9-27-29-30-32..42-44-45-48-50-60-66-67-70";;
+let defaults_w = "+a-4-6-7-9-27-29-30-32..42-44-45-48-50-60-66-67";;
 let defaults_warn_error = "-a+31";;
 
 let () = parse_options false defaults_w;;
@@ -642,8 +640,6 @@ let message = function
       "trmc attribute is only applicable on recursive function bindings"
   | Unused_trmc_attribute ->
       "this function is marked trmc but is never applied in trmc position"
-  | Potential_trmc_call ->
-      "this function is applied in trmc position"
 ;;
 
 let nerrors = ref 0;;
