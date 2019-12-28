@@ -371,20 +371,30 @@ val transl_class_path: Location.t -> Env.t -> Path.t -> lambda
 
 val make_sequence: ('a -> lambda) -> 'a list -> lambda
 
-val subst: (Ident.t -> Types.value_description -> Env.t -> Env.t) ->
+val subst:
+  (Ident.t -> Types.value_description -> Env.t -> Env.t) ->
+  ?on_bound_variable:(Ident.t -> Ident.t) ->
   lambda Ident.Map.t -> lambda -> lambda
-(** [subst env_update_fun s lt] applies a substitution [s] to the lambda-term
-    [lt].
+(** [subst update_env ~on_bound_variable s lt]
+    applies a substitution [s] to the lambda-term [lt].
 
     Assumes that the image of the substitution is out of reach
     of the bound variables of the lambda-term (no capture).
 
-    [env_update_fun] is used to refresh the environment contained in debug
-    events.  *)
+    [update_env] is used to refresh the environment contained in debug
+    events.
+
+    [on_bound_variable] is used to update bound variables in the body.
+    By default the bound variables are kept unchanged; using [Ident.rename]
+    allows to duplicate a term while preserving uniqueness of identifiers.
+ *)
 
 val rename : Ident.t Ident.Map.t -> lambda -> lambda
 (** A version of [subst] specialized for the case where we're just renaming
     idents. *)
+
+val duplicate : lambda -> lambda
+(** Duplicate a term, freshening all locally-bound identifiers. *)
 
 val map : (lambda -> lambda) -> lambda -> lambda
   (** Bottom-up rewriting, applying the function on

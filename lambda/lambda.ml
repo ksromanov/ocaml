@@ -675,79 +675,98 @@ let rec make_sequence fn = function
    Assumes that the image of the substitution is out of reach
    of the bound variables of the lambda-term (no capture). *)
 
-let subst update_env s lam =
-  let rec subst s lam =
-    let remove_list l s =
-      List.fold_left (fun s (id, _kind) -> Ident.Map.remove id s) s l
-    in
+let subst update_env ?(on_bound_variable = fun id -> id) s lam =
+  let bv id l =
+    let id' = on_bound_variable id in
+    id', Ident.Map.add id id' l in
+  let bvs ids l =
+    List.fold_right (fun (id, kind) (ids', l) ->
+        let id', l = bv id l in
+        ((id', kind) :: ids' , l)
+      ) ids ([], l) in
+  let rec subst s l lam =
     match lam with
-    | Lvar id as l ->
-        begin try Ident.Map.find id s with Not_found -> l end
+    | Lvar id as lam ->
+        begin match Ident.Map.find_opt id l with
+          | Some id' -> Lvar id'
+          | None ->
+             begin match Ident.Map.find_opt id s with
+               | Some lam' -> lam'
+               | None -> lam
+             end
+        end
     | Lconst _ as l -> l
     | Lapply ap ->
-        Lapply{ap with ap_func = subst s ap.ap_func;
-                      ap_args = subst_list s ap.ap_args}
+        Lapply{ap with ap_func = subst s l ap.ap_func;
+                      ap_args = subst_list s l ap.ap_args}
     | Lfunction lf ->
-        let s =
-          List.fold_right
-            (fun (id, _) s -> Ident.Map.remove id s)
-            lf.params s
-        in
-        Lfunction {lf with body = subst s lf.body}
+        let params, l = bvs lf.params l in
+        Lfunction {lf with params; body = subst s l lf.body}
     | Llet(str, k, id, arg, body) ->
-        Llet(str, k, id, subst s arg, subst (Ident.Map.remove id s) body)
+        let id', l' = bv id l in
+        Llet(str, k, id', subst s l arg, subst s l' body)
     | Lletrec(decl, body) ->
-        let s =
-          List.fold_left (fun s (id, _) -> Ident.Map.remove id s)
-            s decl
-        in
-        Lletrec(List.map (subst_decl s) decl, subst s body)
-    | Lprim(p, args, loc) -> Lprim(p, subst_list s args, loc)
+        let decl, l = bvs decl l in
+        Lletrec(List.map (subst_decl s l) decl, subst s l body)
+    | Lprim(p, args, loc) -> Lprim(p, subst_list s l args, loc)
     | Lswitch(arg, sw, loc) ->
-        Lswitch(subst s arg,
-                {sw with sw_consts = List.map (subst_case s) sw.sw_consts;
-                        sw_blocks = List.map (subst_case s) sw.sw_blocks;
-                        sw_failaction = subst_opt s sw.sw_failaction; },
+        Lswitch(subst s l arg,
+                {sw with sw_consts = List.map (subst_case s l) sw.sw_consts;
+                        sw_blocks = List.map (subst_case s l) sw.sw_blocks;
+                        sw_failaction = subst_opt s l sw.sw_failaction; },
                 loc)
     | Lstringswitch (arg,cases,default,loc) ->
         Lstringswitch
-          (subst s arg,List.map (subst_strcase s) cases,subst_opt s default,loc)
-    | Lstaticraise (i,args) ->  Lstaticraise (i, subst_list s args)
+          (subst s l arg,List.map (subst_strcase s l) cases,subst_opt s l default,loc)
+    | Lstaticraise (i,args) ->  Lstaticraise (i, subst_list s l args)
     | Lstaticcatch(body, (id, params), handler) ->
-        Lstaticcatch(subst s body, (id, params),
-                    subst (remove_list params s) handler)
+        let params, l' = bvs params l in
+        Lstaticcatch(subst s l body, (id, params),
+                    subst s l' handler)
     | Ltrywith(body, exn, handler) ->
-        Ltrywith(subst s body, exn, subst (Ident.Map.remove exn s) handler)
-    | Lifthenelse(e1, e2, e3) -> Lifthenelse(subst s e1, subst s e2, subst s e3)
-    | Lsequence(e1, e2) -> Lsequence(subst s e1, subst s e2)
-    | Lwhile(e1, e2) -> Lwhile(subst s e1, subst s e2)
+        let exn, l' = bv exn l in
+        Ltrywith(subst s l body, exn, subst s l' handler)
+    | Lifthenelse(e1, e2, e3) -> Lifthenelse(subst s l e1, subst s l e2, subst s l e3)
+    | Lsequence(e1, e2) -> Lsequence(subst s l e1, subst s l e2)
+    | Lwhile(e1, e2) -> Lwhile(subst s l e1, subst s l e2)
     | Lfor(v, lo, hi, dir, body) ->
-        Lfor(v, subst s lo, subst s hi, dir,
-          subst (Ident.Map.remove v s) body)
+        let v, l' = bv v l in
+        Lfor(v, subst s l lo, subst s l hi, dir,
+          subst s l' body)
     | Lassign(id, e) ->
-        assert(not (Ident.Map.mem id s));
-        Lassign(id, subst s e)
+       assert (not (Ident.Map.mem id s));
+        let id =
+          try Ident.Map.find id l with Not_found -> id in
+        Lassign(id, subst s l e)
     | Lsend (k, met, obj, args, loc) ->
-        Lsend (k, subst s met, subst s obj, subst_list s args, loc)
+        Lsend (k, subst s l met, subst s l obj, subst_list s l args, loc)
     | Levent (lam, evt) ->
+        let lev_env = evt.lev_env in
+        let lev_env =
+          Ident.Map.fold (fun id id' env ->
+            match Env.find_value (Path.Pident id) evt.lev_env with
+              | exception Not_found -> env
+              | vd -> Env.add_value id' vd env
+            ) l lev_env
+        in
         let lev_env =
           Ident.Map.fold (fun id _ env ->
             match Env.find_value (Path.Pident id) evt.lev_env with
             | exception Not_found -> env
             | vd -> update_env id vd env
-          ) s evt.lev_env
+          ) s lev_env
         in
-        Levent (subst s lam, { evt with lev_env })
-    | Lifused (v, e) -> Lifused (v, subst s e)
-  and subst_list s l = List.map (subst s) l
-  and subst_decl s (id, exp) = (id, subst s exp)
-  and subst_case s (key, case) = (key, subst s case)
-  and subst_strcase s (key, case) = (key, subst s case)
-  and subst_opt s = function
+        Levent (subst s l lam, { evt with lev_env })
+    | Lifused (v, e) -> Lifused (v, subst s l e)
+  and subst_list s l li = List.map (subst s l) li
+  and subst_decl s l (id, exp) = (id, subst s l exp)
+  and subst_case s l (key, case) = (key, subst s l case)
+  and subst_strcase s l (key, case) = (key, subst s l case)
+  and subst_opt s l = function
     | None -> None
-    | Some e -> Some (subst s e)
+    | Some e -> Some (subst s l e)
   in
-  subst s lam
+  subst s Ident.Map.empty lam
 
 let rename idmap lam =
   let update_env oldid vd env =
@@ -756,6 +775,13 @@ let rename idmap lam =
   in
   let s = Ident.Map.map (fun new_id -> Lvar new_id) idmap in
   subst update_env s lam
+
+let duplicate lam =
+  subst
+    (fun _ _ env -> env)
+    ~on_bound_variable:(fun id -> Ident.rename id)
+    Ident.Map.empty
+  lam
 
 let shallow_map f = function
   | Lvar _
