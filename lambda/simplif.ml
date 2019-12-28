@@ -993,8 +993,12 @@ let trmc_placeholder = Lconst (Const_base (Const_int 0))
 type trmc_stub = {
   stub_arity: int;
   stub_body: lfunction;
-  mutable stub_uses: (int * Ident.t) list; (* offset * specialized function_name *)
-  mutable stub_frozen: bool; (* true if no new function should be generated *)
+  mutable stub_uses: specialized_stub list;
+}
+and specialized_stub = {
+ offset: int;
+ name: Ident.t;
+ mutable generated: bool;
 }
 
 (* Detection of trmc calls *)
@@ -1038,13 +1042,13 @@ and has_trmc all_candidates lam =
     | _ -> false
 
 let rec specialize_trmc (id,stub) ~offset =
-  try List.assoc offset stub.stub_uses
-  with Not_found ->
-    assert (not stub.stub_frozen);
+  match List.find (fun use -> use.offset = offset) stub.stub_uses with
+  | use -> use.name
+  | exception Not_found ->
     let fresh = Ident.name id ^ "_" ^ string_of_int offset in
-    let id' = Ident.create_local fresh in
-    stub.stub_uses <- (offset, id') :: stub.stub_uses;
-    id'
+    let name = Ident.create_local fresh in
+    stub.stub_uses <- { offset; name; generated = false } :: stub.stub_uses;
+    name
 
 and extract_reccall all_candidates acc = function
   | arg :: args ->
@@ -1123,7 +1127,6 @@ let rec introduce_trmc all_candidates bindings =
             stub_arity = List.length lfun.params;
             stub_body = lfun;
             stub_uses = [];
-            stub_frozen = false;
           } in
           (id, stub) :: extract rest
       | _ :: rest ->
@@ -1134,7 +1137,7 @@ let rec introduce_trmc all_candidates bindings =
 
   let all_candidates = candidates @ all_candidates in
 
-  let rewrite_stub_use lfun (offset, id') =
+  let rewrite_stub_use lfun { offset; name = id'; _ } =
     let caller_block = Ident.create_local "caller_block" in
     let on_return lam =
       Lprim (Psetfield (offset, Pointer, Heap_initialization),
@@ -1166,8 +1169,15 @@ let rec introduce_trmc all_candidates bindings =
     let param = (caller_block, Pgenval) in
     id', Lfunction {lfun with params = param :: lfun.params; body}
   in
-  let bindings_of_stub (_id,stub) =
-    List.map (rewrite_stub_use stub.stub_body) stub.stub_uses
+  let new_bindings_of_stub (_id,stub) =
+    let of_use use =
+      if use.generated then None
+      else begin
+        use.generated <- true;
+        Some (rewrite_stub_use stub.stub_body use)
+      end
+    in
+    List.filter_map of_use stub.stub_uses
   in
 
   let rewrite_function lfun =
@@ -1190,15 +1200,18 @@ let rec introduce_trmc all_candidates bindings =
     List.map rewrite_binding bindings
   else begin
     let bindings = List.map rewrite_binding bindings in
-    (* Freeze stub generation, generate all stubs *)
+    let rec all_bindings bindings =
+      match List.concat_map new_bindings_of_stub candidates with
+      | [] -> bindings
+      | new_bindings -> all_bindings (new_bindings @ bindings)
+    in
+    let bindings = all_bindings bindings in
     List.iter (fun (_id,stub) ->
-        stub.stub_frozen <- true;
         if stub.stub_uses = [] && stub.stub_body.attr.trmc_candidate then
           Location.prerr_warning stub.stub_body.loc
             Warnings.Unused_trmc_attribute;
       ) candidates;
-    let bindings' = List.concat (List.map bindings_of_stub candidates) in
-    bindings' @ bindings
+    bindings
   end
 
 and rewrite_trmc all_candidates =
