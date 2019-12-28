@@ -1180,7 +1180,8 @@ let rec introduce_trmc all_candidates bindings =
       if use.generated then None
       else begin
         use.generated <- true;
-        Some (rewrite_stub_use stub.stub_body use)
+        let id, lam = rewrite_stub_use stub.stub_body use in
+        Some (id, Lambda.duplicate lam)
       end
     in
     List.filter_map of_use stub.stub_uses
