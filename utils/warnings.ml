@@ -94,6 +94,7 @@ type t =
   | Unused_functor_parameter of string      (* 67 *)
   | Match_on_mutable_state_prevent_uncurry  (* 68 *)
   | Unused_tmc_attribute                    (* 69 *)
+  | Tmc_breaks_tailcall                     (* 70 *)
 ;;
 
 (* If you remove a warning, leave a hole in the numbering.  NEVER change
@@ -173,9 +174,10 @@ let number = function
   | Unused_functor_parameter _ -> 67
   | Match_on_mutable_state_prevent_uncurry -> 68
   | Unused_tmc_attribute -> 69
+  | Tmc_breaks_tailcall -> 70
 ;;
 
-let last_warning_number = 69
+let last_warning_number = 70
 ;;
 
 (* Third component of each tuple is the list of names for each warning. The
@@ -336,6 +338,9 @@ let descriptions =
     ["match-on-mutable-state-prevent-uncurry"];
     69, "Unused @tail_mod_cons attribute",
     ["unused-tmc-attribute"];
+    70, "A tail call is turned into a non-tail call \
+         by the @tail_mod_cons transformation.",
+    ["tmc-breaks-tailcall"];
   ]
 ;;
 
@@ -821,6 +826,13 @@ let message = function
      cause additional closure allocations."
   | Unused_tmc_attribute ->
       "This function is marked @tail_mod_cons but is never applied in TMC position."
+  | Tmc_breaks_tailcall ->
+      "This call is in tail-modulo-cons position in a TMC function,\n\
+       but the function called is not itself specialized for TMC,\n\
+       so the call will not be in tail position in the transformed version.\n\
+       Please either mark the called function with the [@tail_mod_cons] attribute,\n\
+       or mark this call with the [@tailcall false] attribute to make its\n\
+       non-tailness explicit."
 ;;
 
 let nerrors = ref 0;;
