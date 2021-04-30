@@ -538,8 +538,8 @@ let declare_binding ctx (var, def) =
 let rec choice ctx t =
   let rec choice ctx ~tail t =
     match t with
-    | (Lvar _ | Lconst _ | Lfunction _ | Lsend _
-      | Lassign _ | Lfor _ | Lwhile _) ->
+    | (Lvar _ | Lmutvar _ | Lconst _ | Lfunction _
+      | Lsend _ | Lassign _ | Lfor _ | Lwhile _) ->
         let t = traverse ctx t in
         Choice.return t
 
@@ -568,6 +568,11 @@ let rec choice ctx t =
         let def = traverse ctx def in
         let+ body = choice ctx ~tail body in
         Llet (lk, vk, var, def, body)
+    | Lmutlet (k, var, def, body) ->
+        (* non-recursive bindings are not specialized *)
+        let def = traverse ctx def in
+        let+ body = choice ctx ~tail body in
+        Lmutlet (k, var, def, body)
     | Lletrec (bindings, body) ->
         let ctx, bindings = traverse_letrec ctx bindings in
         let+ body = choice ctx ~tail body in
