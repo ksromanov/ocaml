@@ -715,7 +715,7 @@ let rec choice ctx t =
         choice_makeblock ctx ~tail (tag, flag, shape) primargs loc
 
     (* Some primitives have arguments in tail-position *)
-    | (Pidentity | Popaque) as idop ->
+    | Popaque as idop ->
         let l1 = match primargs with
           |  [l1] -> l1
           | _ -> invalid_arg "choice_prim" in
@@ -756,9 +756,6 @@ let rec choice ctx t =
 
     (* we don't handle array indices as destinations yet *)
     | (Pmakearray _ | Pduparray _)
-
-    (* we don't handle application primitives as a direct call yet *)
-    | Prevapply | Pdirapply
 
     (* we don't handle { foo with x = ...; y = recursive-call } *)
     | Pduprecord _
