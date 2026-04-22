@@ -74,6 +74,9 @@ val looked_up : 'a t -> modname -> bool
    imported in the environment [penv] *)
 val is_imported : 'a t -> modname -> bool
 
+(* [add_import penv md] records [md] as a dependency *)
+val add_import : 'a t -> modname -> unit
+
 (* [is_imported_opaque penv md] checks if [md] has been imported
    in [penv] as an opaque module *)
 val is_imported_opaque : 'a t -> modname -> bool

@@ -221,6 +221,19 @@ let rec nondep_mty_with_presence env va ids pres mty =
                     nondep_mty res_env va ids res)
       in
       pres, mty
+  | Mty_functor(Implicit (param, arg), res) ->
+      let var_inv =
+        match va with Co -> Contra | Contra -> Co | Strict -> Strict in
+      let res_env =
+        match param with
+        | None -> env
+        | Some param -> Env.add_module param Mp_present arg env
+      in
+      let mty =
+        Mty_functor(Implicit (param, nondep_mty env var_inv ids arg),
+                    nondep_mty res_env va ids res)
+      in
+      pres, mty
 
 and nondep_mty env va ids mty =
   snd (nondep_mty_with_presence env va ids Mp_present mty)

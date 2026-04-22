@@ -510,6 +510,11 @@ type type_descriptions = type_descr_kind
 
 let in_signature_flag = 0x01
 
+type implicit_flag_record = {
+  implicit_level: int option;
+  implicit_cannot_occur: bool;
+}
+
 type t = {
   values: (value_entry, value_data) IdTbl.t;
   constrs: constructor_data TycompTbl.t;
@@ -524,6 +529,9 @@ type t = {
   local_constraints: type_declaration Path.Map.t;
   id_pairs: (Ident.Unscoped.t * Ident.Unscoped.t) list;
   flags: int;
+  implicit_flags: implicit_flag_record Ident.tbl;
+  implicit_instances:
+    (Path.t * (Ident.t * module_type) list * module_type) list;
 }
 
 and module_components =
@@ -727,6 +735,8 @@ let empty = {
   id_pairs = [];
   flags = 0;
   not_aliasable = Ident.empty;
+  implicit_flags = Ident.empty;
+  implicit_instances = [];
  }
 
 let in_signature b env =
@@ -797,7 +807,8 @@ let strengthen =
 
 let md md_type =
   {md_type; md_attributes=[]; md_loc=Location.none
-  ;md_uid = Uid.internal_not_actually_unique}
+  ;md_uid = Uid.internal_not_actually_unique
+  ;md_implicit=Asttypes.Nonimplicit}
 
 (* Print addresses *)
 
@@ -935,6 +946,7 @@ let sign_of_cmi ~freshen { Persistent_env.Persistent_signature.cmi; _ } =
       md_loc = Location.none;
       md_attributes = [];
       md_uid = Uid.of_compilation_unit_id id;
+      md_implicit = Asttypes.Nonimplicit;
     }
   in
   let mda_address = Lazy_backtrack.create_forced (Aident id) in
@@ -991,6 +1003,11 @@ let crc_of_unit name =
 let is_imported_opaque modname =
   Persistent_env.is_imported_opaque !persistent_env modname
 
+module Persistent_signature = Persistent_env.Persistent_signature
+
+let add_import s =
+  Persistent_env.add_import !persistent_env s
+
 let register_import_as_opaque modname =
   Persistent_env.register_import_as_opaque !persistent_env modname
 
@@ -1041,8 +1058,9 @@ let modtype_of_functor_appl fcomp p1 p2 =
           let subst =
             match fcomp.fcomp_arg with
             | Unit
-            | Named (None, _) -> Subst.identity
-            | Named (Some param, _) -> Subst.add_module param p2 Subst.identity
+            | Named (None, _) | Implicit (None, _) -> Subst.identity
+            | Named (Some param, _) | Implicit (Some param, _) ->
+                Subst.add_module param p2 Subst.identity
           in
           Subst.modtype (Rescope scope) subst mty
         in
@@ -1963,7 +1981,9 @@ let rec components_of_module_maker
             (match arg with
             | Unit -> Unit
             | Named (param, ty_arg) ->
-              Named (param, force_modtype (modtype scoping sub ty_arg)));
+              Named (param, force_modtype (modtype scoping sub ty_arg))
+            | Implicit (param, ty_arg) ->
+              Implicit (param, force_modtype (modtype scoping sub ty_arg)));
           fcomp_res = force_modtype (modtype scoping sub ty_res);
           fcomp_shape = cm_shape;
           fcomp_cache = Hashtbl.create 17;
@@ -2243,8 +2263,9 @@ let components_of_functor_appl ~loc ~f_path ~f_comp ~arg env =
     let sub =
       match f_comp.fcomp_arg with
       | Unit
-      | Named (None, _) -> Subst.identity
-      | Named (Some param, _) -> Subst.add_module param arg Subst.identity
+      | Named (None, _) | Implicit (None, _) -> Subst.identity
+      | Named (Some param, _) | Implicit (Some param, _) ->
+          Subst.add_module param arg Subst.identity
     in
     (* we have to apply eagerly instead of passing sub to [components_of_module]
        because of the call to [check_well_formed_module]. *)
@@ -2270,6 +2291,84 @@ let components_of_functor_appl ~loc ~f_path ~f_comp ~arg env =
 let _ =
   components_of_functor_appl' := components_of_functor_appl;
   components_of_module_maker' := components_of_module_maker
+
+(* Register a module as an implicit instance if it has the implicit flag *)
+let register_if_implicit path md env =
+  match md.md_implicit with
+  | Asttypes.Nonimplicit -> env
+  | Asttypes.Implicit ->
+      let mty = find_strengthened_module ~aliasable:true path env in
+      let rec add acc params mty =
+        let acc = ((path, List.rev params, mty) :: acc) in
+        let lazy_mty = Subst.Lazy.of_modtype mty in
+        match Subst.Lazy.force_modtype (scrape_alias env lazy_mty) with
+        | Mty_functor (Named (Some id, param), res)
+        | Mty_functor (Implicit (Some id, param), res) ->
+            (* Treat all functor params of implicit modules as implicit params *)
+            let params = (id, param) :: params in
+              add acc params res
+        | _ -> acc
+      in
+      let instances = add env.implicit_instances [] mty in
+        {env with implicit_instances = instances}
+
+(* Register all implicit modules from a signature opened at the given root path *)
+let open_implicit root sg env =
+  let env = List.fold_left
+      (fun env item ->
+         match item with
+         | Sig_module(id, _pres, md, _, _) ->
+             register_if_implicit (Pdot (root, Ident.name id)) md env
+         | _ -> env)
+      env sg
+  in
+  env
+
+(* Implicit flags accessors *)
+
+let set_implicit_level id level env =
+  let flags =
+    try Ident.find_same id env.implicit_flags
+    with Not_found -> { implicit_level = None; implicit_cannot_occur = false }
+  in
+  { env with
+    implicit_flags =
+      Ident.add id { flags with implicit_level = Some level }
+        env.implicit_flags }
+
+let rec implicit_level path env =
+  match path with
+  | Pident id ->
+      begin try
+        match (Ident.find_same id env.implicit_flags).implicit_level with
+        | Some l -> l
+        | None -> 0
+      with Not_found -> 0
+      end
+  | Pdot(p, _s) -> implicit_level p env
+  | Papply _ | Pextra_ty _ -> 0
+
+let rec implicit_cannot_occur path env =
+  match path with
+  | Pident id ->
+      begin try
+        (Ident.find_same id env.implicit_flags).implicit_cannot_occur
+      with Not_found -> false
+      end
+  | Pdot(p, _s) -> implicit_cannot_occur p env
+  | Papply _ | Pextra_ty _ -> false
+
+let forbid_implicit_occur id env =
+  let flags =
+    try Ident.find_same id env.implicit_flags
+    with Not_found -> { implicit_level = None; implicit_cannot_occur = false }
+  in
+  { env with
+    implicit_flags =
+      Ident.add id { flags with implicit_cannot_occur = true }
+        env.implicit_flags }
+
+let implicit_instances env = env.implicit_instances
 
 (* Insertion of bindings by identifier *)
 
@@ -2309,6 +2408,7 @@ and add_module_declaration ?(noalias=false) ?shape ~check id presence md env =
   let addr = module_declaration_address env id presence md in
   let shape = shape_or_leaf md.mdl_uid shape in
   let env = store_module ~check id addr presence md shape env in
+  let env = register_if_implicit (Pident id) (Subst.Lazy.force_module_decl md) env in
   if noalias then mark_not_aliasable id env else env
 
 and add_module_declaration_lazy ~update_summary id presence md env =
@@ -2343,7 +2443,8 @@ let add_module_lazy ~update_summary id presence mty env =
   let md = Subst.Lazy.{mdl_type = mty;
                        mdl_attributes = [];
                        mdl_loc = Location.none;
-                       mdl_uid = Uid.internal_not_actually_unique}
+                       mdl_uid = Uid.internal_not_actually_unique;
+                       mdl_implicit = Asttypes.Nonimplicit}
   in
   add_module_declaration_lazy ~update_summary id presence md env
 
@@ -2400,8 +2501,9 @@ let enter_cltype ~scope name desc env =
   let env = store_cltype id desc (Shape.leaf desc.clty_uid) env in
   (id, env)
 
-let enter_module ~scope ?noalias s presence mty env =
-  enter_module_declaration ~scope ?noalias s presence (md mty) env
+let enter_module ~scope ?noalias ?(implicit_=Asttypes.Nonimplicit) s presence mty env =
+  let mty_md = {(md mty) with md_implicit = implicit_} in
+  enter_module_declaration ~scope ?noalias s presence mty_md env
 
 (* Insertion of all components of a signature *)
 
@@ -2529,7 +2631,16 @@ let open_signature slot root env0 : (_,_) result =
   | exception Not_found -> Error `Not_found
   | Ok (Functor_comps _) -> Error `Functor
   | Ok (Structure_comps comps) ->
-    Ok (add_components slot root env0 comps)
+    let newenv = add_components slot root env0 comps in
+    let newenv =
+      match find_module root env0 with
+      | exception Not_found -> newenv
+      | md ->
+        match md.md_type with
+        | Mty_signature sg -> open_implicit root sg newenv
+        | _ -> newenv
+    in
+    Ok newenv
 
 let remove_last_open root env0 =
   let rec filter_summary summary =
@@ -2997,7 +3108,7 @@ and get_functor_components ~errors ~loc lid env comps =
       match fcomps.fcomp_arg with
       | Unit -> (* PR#7611 *)
           may_lookup_error errors loc env (Generative_used_as_applicative lid)
-      | Named (_, arg) -> fcomps, arg
+      | Named (_, arg) | Implicit (_, arg) -> fcomps, arg
     end
   | Ok (Structure_comps _) ->
       may_lookup_error errors loc env (Structure_used_as_functor lid)
@@ -3010,7 +3121,7 @@ and lookup_all_args ~errors ~use lid0 env =
   let rec loop_lid_arg args = function
     | Lident _ | Ldot _ as f_lid ->
         (f_lid, args)
-    | Lapply (f_lid, arg_lid) ->
+    | Lapply (f_lid, arg_lid, _) ->
         let { txt = arg_lid; loc } = arg_lid in
         let arg_path, arg_md = lookup_module ~errors ~use ~loc arg_lid env in
         loop_lid_arg ((f_lid,arg_path,arg_md.md_type)::args) f_lid.txt

@@ -71,6 +71,7 @@ let initial_env () =
   Types.Uid.reinit();
   Types.reset();
   Ctype.reset();
+  Typeimplicit.reset();
   let initially_opened_module =
     if !Clflags.nopervasives then
       None

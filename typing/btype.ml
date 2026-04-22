@@ -488,7 +488,7 @@ let type_iterators_without_type_expr =
     it.it_path ctd.clty_path
   and it_functor_param it = function
     | Unit -> ()
-    | Named (_, mt) -> it.it_module_type it mt
+    | Named (_, mt) | Implicit (_, mt) -> it.it_module_type it mt
   and it_module_type it = function
       Mty_ident p
     | Mty_alias p -> it.it_path p
@@ -875,3 +875,80 @@ let get_folded_desc ~keep_Tvar ty =
                                     deep_occur_list ty args) ->
           Tconstr (path, args, ref Mnil)
       | _ -> desc
+
+(**** Utilities for arrow flags ****)
+
+let arrow_is_simple = function
+  | Tarr_arg Nolabel -> true
+  | _ -> false
+
+let arrow_is_optional = function
+  | Tarr_arg (Optional _) -> true
+  | _ -> false
+
+let is_optional_apply = function
+  | Tapp_arg l -> is_optional l
+  | Tapp_implicit -> false
+
+let label_name_of_arrow = function
+  | Tarr_arg Nolabel -> ""
+  | Tarr_arg (Optional s) | Tarr_arg (Labelled s) -> s
+  | Tarr_implicit id -> Ident.name id
+
+let label_name_of_arrow_raw = function
+  | Tarr_arg Nolabel -> ""
+  | Tarr_arg (Optional s) -> "?" ^ s
+  | Tarr_arg (Labelled s) -> s
+  | Tarr_implicit id -> "implicit " ^ (Ident.name id)
+
+let tarr_of_parr = function
+  | Parsetree.Parr_arg l -> Tarr_arg l
+  | Parsetree.Parr_implicit _ -> assert false (* handled separately *)
+
+let tapp_of_papp = function
+  | Parsetree.Papp_arg l -> Tapp_arg l
+  | Parsetree.Papp_implicit -> Tapp_implicit
+
+let tarr_of_tapp = function
+  | Tapp_arg l -> Tarr_arg l
+  | Tapp_implicit -> assert false
+
+let tapp_of_tarr = function
+  | Tarr_arg l -> Tapp_arg l
+  | Tarr_implicit _ -> Tapp_implicit
+
+let arrow_equal_apply arr app =
+  match app, arr with
+  | Tapp_arg Nolabel, Tarr_arg Nolabel -> true
+  | Tapp_arg (Labelled s), Tarr_arg (Labelled s')
+  | Tapp_arg (Optional s), Tarr_arg (Optional s') -> s = s'
+  | Tapp_implicit, Tarr_implicit _ -> true
+  | _ -> false
+
+let arrow_is_applicable arr app =
+  match app, arr with
+  | Tapp_arg Nolabel, Tarr_arg (Labelled _)
+    when !Clflags.classic -> true
+  | _ -> arrow_equal_apply arr app
+
+let arrow_is_compatible arr app =
+  match app, arr  with
+  | Tapp_arg Nolabel, Tarr_implicit _ -> false
+  | Tapp_arg Nolabel, _ -> true
+  | _ -> arrow_equal_apply arr app
+
+let extraction_match arr app =
+  match app, arr with
+  | (Tapp_arg (Labelled s) | Tapp_arg (Optional s)),
+    (Tarr_arg (Labelled s') | Tarr_arg (Optional s'))
+    when s = s' -> true
+  | _ -> arrow_equal_apply arr app
+
+let rec extract_application_aux acc arr = function
+  | [] -> raise Not_found
+  | (app, _ as arg) :: args when extraction_match arr app ->
+      (arg, List.rev acc, args)
+  | arg :: args ->
+      extract_application_aux (arg :: acc) arr args
+
+let extract_application arr args = extract_application_aux [] arr args

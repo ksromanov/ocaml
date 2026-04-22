@@ -273,7 +273,6 @@ module Mod = struct
   let functor_ ?loc ?attrs arg body =
     mk ?loc ?attrs (Pmod_functor (arg, body))
   let apply ?loc ?attrs m1 m2 = mk ?loc ?attrs (Pmod_apply (m1, m2))
-  let apply_unit ?loc ?attrs m1 = mk ?loc ?attrs (Pmod_apply_unit m1)
   let constraint_ ?loc ?attrs m mty = mk ?loc ?attrs (Pmod_constraint (m, mty))
   let unpack ?loc ?attrs e = mk ?loc ?attrs (Pmod_unpack e)
   let extension ?loc ?attrs a = mk ?loc ?attrs (Pmod_extension a)
@@ -454,12 +453,14 @@ end
 
 module Md = struct
   let mk ?(loc = !default_loc) ?(attrs = [])
-        ?(docs = empty_docs) ?(text = []) name typ =
+        ?(docs = empty_docs) ?(text = []) ?(implicit_ = Asttypes.Nonimplicit)
+        name typ =
     {
      pmd_name = name;
      pmd_type = typ;
      pmd_attributes =
        add_text_attrs text (add_docs_attrs docs attrs);
+     pmd_implicit = implicit_;
      pmd_loc = loc;
     }
 end
@@ -490,22 +491,24 @@ end
 
 module Mb = struct
   let mk ?(loc = !default_loc) ?(attrs = [])
-        ?(docs = empty_docs) ?(text = []) name expr =
+        ?(docs = empty_docs) ?(text = []) ?(implicit_ = Asttypes.Nonimplicit)
+        name expr =
     {
      pmb_name = name;
      pmb_expr = expr;
      pmb_attributes =
        add_text_attrs text (add_docs_attrs docs attrs);
+     pmb_implicit = implicit_;
      pmb_loc = loc;
     }
 end
 
 module Opn = struct
   let mk ?(loc = !default_loc) ?(attrs = []) ?(docs = empty_docs)
-        ?(override = Fresh) expr =
+        ?(flag = Asttypes.Open_all Fresh) expr =
     {
      popen_expr = expr;
-     popen_override = override;
+     popen_flag = flag;
      popen_loc = loc;
      popen_attributes = add_docs_attrs docs attrs;
     }

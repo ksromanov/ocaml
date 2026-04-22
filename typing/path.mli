@@ -79,6 +79,7 @@ val scrape_extra_ty: t -> t
 val name: ?paren:(string -> bool) -> t -> string
     (* [paren] tells whether a path suffix needs parentheses *)
 val head: t -> Ident.t
+val head_opt: t -> Ident.t option
 
 val print: t Format_doc.printer
 
@@ -87,6 +88,9 @@ val heads: t -> Ident.t list
 val last: t -> string
 
 val is_constructor_typath: t -> bool
+
+val flatten_with_pos: t -> Ident.t * (string * int) list
+val to_longident: t -> Longident.t
 
 module Map : Map.S with type key = t
 module Set : Set.S with type elt = t

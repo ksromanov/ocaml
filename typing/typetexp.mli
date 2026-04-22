@@ -51,7 +51,7 @@ val type_open:
    Longident.t Asttypes.loc -> Path.t * Env.t)
     ref
 
-val valid_tyvar_name : string -> bool
+val valid_tyvar_name: string -> bool
 
 val transl_simple_type:
         Env.t -> ?univars:TyVarEnv.poly_univars -> closed:bool

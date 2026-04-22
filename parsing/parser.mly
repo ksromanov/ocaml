@@ -173,7 +173,7 @@ let ghstr ~loc d = Str.mk ~loc:(ghost_loc loc) d
 let ghsig ~loc d = Sig.mk ~loc:(ghost_loc loc) d
 
 let mkinfix arg1 op arg2 =
-  Pexp_apply(op, [Nolabel, arg1; Nolabel, arg2])
+  Pexp_apply(op, [Papp_arg Nolabel, arg1; Papp_arg Nolabel, arg2])
 
 let neg_string f =
   if String.length f > 0 && f.[0] = '-'
@@ -193,7 +193,7 @@ let mkuminus ~sloc ~oploc name arg =
     Pexp_constant({pconst_desc = Pconst_float (f, m); pconst_loc=_}), [] ->
       Pexp_constant(mkconst ~loc:sloc (Pconst_float(neg_string f, m)))
   | _ ->
-      Pexp_apply(mkoperator ~loc:oploc ("~" ^ name), [Nolabel, arg])
+      Pexp_apply(mkoperator ~loc:oploc ("~" ^ name), [Papp_arg Nolabel, arg])
 
 let mkuplus ~sloc ~oploc name arg =
   let desc = arg.pexp_desc in
@@ -206,7 +206,7 @@ let mkuplus ~sloc ~oploc name arg =
     [] ->
       Pexp_constant(mkconst ~loc:sloc desc)
   | _ ->
-      Pexp_apply(mkoperator ~loc:oploc ("~" ^ name), [Nolabel, arg])
+      Pexp_apply(mkoperator ~loc:oploc ("~" ^ name), [Papp_arg Nolabel, arg])
 
 let mk_attr ~loc name payload =
   Builtin_attributes.(register_attr Parser name);
@@ -338,7 +338,7 @@ type ('dot,'index) array_family = {
 
   index:
     Lexing.position * Lexing.position -> paren_kind -> 'index
-    -> index_dim * (arg_label * expression) list
+    -> index_dim * (apply_flag * expression) list
    (*
      [index (start,stop) paren index] computes the dimension of the
      index argument and how it should be desugared when transformed
@@ -378,14 +378,14 @@ let builtin_arraylike_name loc _ ~assign paren_kind n =
    ghloc ~loc (Ldot(mknoloc prefix, mknoloc opname))
 
 let builtin_arraylike_index loc paren_kind index = match paren_kind with
-    | Paren | Bracket -> One, [Nolabel, index]
+    | Paren | Bracket -> One, [Papp_arg Nolabel, index]
     | Brace ->
        (* Multi-indices for bigarray are comma-separated ([a.{1,2,3,4}]) *)
        match bigarray_untuplify index with
-     | [x] -> One, [Nolabel, x]
-     | [x;y] -> Two, [Nolabel, x; Nolabel, y]
-     | [x;y;z] -> Three, [Nolabel, x; Nolabel, y; Nolabel, z]
-     | coords -> Many, [Nolabel, ghexp ~loc (Pexp_array coords)]
+     | [x] -> One, [Papp_arg Nolabel, x]
+     | [x;y] -> Two, [Papp_arg Nolabel, x; Papp_arg Nolabel, y]
+     | [x;y;z] -> Three, [Papp_arg Nolabel, x; Papp_arg Nolabel, y; Papp_arg Nolabel, z]
+     | coords -> Many, [Papp_arg Nolabel, ghexp ~loc (Pexp_array coords)]
 
 let builtin_indexing_operators : (unit, expression) array_family  =
   { index = builtin_arraylike_index; name = builtin_arraylike_name }
@@ -412,8 +412,8 @@ let user_index loc _ index =
   (* Multi-indices for user-defined operators are semicolon-separated
      ([a.%[1;2;3;4]]) *)
   match index with
-    | [a] -> One, [Nolabel, a]
-    | l -> Many, [Nolabel, mkexp ~loc (Pexp_array l)]
+    | [a] -> One, [Papp_arg Nolabel, a]
+    | l -> Many, [Papp_arg Nolabel, mkexp ~loc (Pexp_array l)]
 
 let user_indexing_operators:
       (Longident.t option * string, expression list) array_family
@@ -426,8 +426,8 @@ let mk_indexop_expr array_indexing_operator ~loc
   let fn = array_indexing_operator.name loc dot ~assign paren n in
   let set_arg = match set_expr with
     | None -> []
-    | Some expr -> [Nolabel, expr] in
-  let args = (Nolabel,array) :: index @ set_arg in
+    | Some expr -> [Papp_arg Nolabel, expr] in
+  let args = (Papp_arg Nolabel,array) :: index @ set_arg in
   mkexp ~loc (Pexp_apply(ghexp ~loc (Pexp_ident fn), args))
 
 let indexop_unclosed_error loc_s s loc_e =
@@ -436,10 +436,15 @@ let indexop_unclosed_error loc_s s loc_e =
 
 let lapply ~loc p1 loc_p1 p2 loc_p2 =
   if !Clflags.applicative_functors
-  then Lapply(mkrhs p1 loc_p1, mkrhs p2 loc_p2)
+  then Lapply(mkrhs p1 loc_p1, mkrhs p2 loc_p2, Asttypes.Nonimplicit)
   else raise (Syntaxerr.Error(
                   Syntaxerr.Applicative_path (make_loc loc)))
 
+let rec mod_ext_apply p1 = function
+  | [] -> p1
+  | (p2, i) :: rest ->
+    let dummy = (Lexing.dummy_pos, Lexing.dummy_pos) in
+    Lapply(mkrhs (mod_ext_apply p1 rest) dummy, mkrhs p2 dummy, i)
 
 let make_ghost x = { x with loc = { x.loc with loc_ghost = true }}
 
@@ -635,12 +640,12 @@ let all_params_as_newtypes =
   let is_newtype { pparam_desc; _ } =
     match pparam_desc with
     | Pparam_newtype _ -> true
-    | Pparam_val _ -> false
+    | Pparam_val _ | Pparam_implicit _ -> false
   in
   let as_newtype { pparam_desc; pparam_loc } =
     match pparam_desc with
     | Pparam_newtype x -> Some (x, pparam_loc)
-    | Pparam_val _ -> None
+    | Pparam_val _ | Pparam_implicit _ -> None
   in
   fun params ->
     if List.for_all is_newtype params
@@ -796,6 +801,7 @@ let mk_directive ~loc name arg =
 %token GREATERRBRACE          ">}"
 %token GREATERRBRACKET        ">]"
 %token IF                     "if"
+%token IMPLICIT               "implicit"
 %token IN                     "in"
 %token INCLUDE                "include"
 %token <string> INFIXOP0      "!="   (* just an example *)
@@ -1418,6 +1424,9 @@ functor_arg:
   | (* An argument accompanied with an explicit type. *)
     LPAREN x = mkrhs(module_name) COLON mty = module_type RPAREN
       { $startpos, Named (x, mty) }
+  | (* An implicit argument. *)
+    LBRACE x = mkrhs(module_name) COLON mty = module_type RBRACE
+      { $startpos, Implicit (x, mty) }
 ;
 
 module_name:
@@ -1461,10 +1470,15 @@ module_expr:
         { Pmod_ident x }
     | (* In a functor application, the actual argument must be parenthesized. *)
       me1 = module_expr me2 = paren_module_expr
-        { Pmod_apply(me1, me2) }
-    | (* Functor applied to unit. *)
-      me = module_expr LPAREN RPAREN
-        { Pmod_apply_unit me }
+        { Pmod_apply(me1, Pmarg_applicative me2) }
+    | (* Application to unit is sugar for application to an empty structure. *)
+      me1 = module_expr LPAREN RPAREN
+        { Pmod_apply(me1, Pmarg_generative) }
+    | (* Implicit functor application uses braces. *)
+      me1 = module_expr LBRACE me2 = module_expr RBRACE
+        { Pmod_apply(me1, Pmarg_implicit me2) }
+    | _me1 = module_expr LBRACE module_expr error
+        { unclosed "{" $loc($2) "}" $loc($4) }
     | (* An extension. *)
       ex = extension
         { Pmod_extension ex }
@@ -1587,10 +1601,26 @@ local_structure_item:
         { pstr_exception $1 }
     | module_binding
         { pstr_module $1 }
+    | implicit_module_binding
+        { pstr_module $1 }
     | open_declaration
         { pstr_open $1 }
     )
     { $1 }
+;
+
+(* An implicit module binding (in a let expression). *)
+%inline implicit_module_binding:
+  IMPLICIT MODULE
+  ext = ext attrs1 = attributes
+  name = mkrhs(module_name)
+  body = module_binding_body
+  attrs2 = post_item_attributes
+    { let docs = symbol_docs $sloc in
+      let loc = make_loc $sloc in
+      let attrs = attrs1 @ attrs2 in
+      let body = Mb.mk name body ~implicit_:Asttypes.Implicit ~attrs ~loc ~docs in
+      body, ext }
 ;
 
 (* A single module binding. *)
@@ -1704,7 +1734,7 @@ module_type_declaration:
 
 open_declaration:
   OPEN
-  override = override_flag
+  flag = open_flag
   ext = ext
   attrs1 = attributes
   me = module_expr
@@ -1713,13 +1743,13 @@ open_declaration:
     let attrs = attrs1 @ attrs2 in
     let loc = make_loc $sloc in
     let docs = symbol_docs $sloc in
-    Opn.mk me ~override ~attrs ~loc ~docs, ext
+    Opn.mk me ~flag ~attrs ~loc ~docs, ext
   }
 ;
 
 open_description:
   OPEN
-  override = override_flag
+  flag = open_flag
   ext = ext
   attrs1 = attributes
   id = mkrhs(mod_ext_longident)
@@ -1728,7 +1758,7 @@ open_description:
     let attrs = attrs1 @ attrs2 in
     let loc = make_loc $sloc in
     let docs = symbol_docs $sloc in
-    Opn.mk id ~override ~attrs ~loc ~docs, ext
+    Opn.mk id ~flag ~attrs ~loc ~docs, ext
   }
 ;
 
@@ -1819,6 +1849,10 @@ signature_item:
         { psig_module $1 }
     | module_alias
         { psig_module $1 }
+    | implicit_module_declaration
+        { psig_module $1 }
+    | implicit_module_alias
+        { psig_module $1 }
     | module_subst
         { psig_modsubst $1 }
     | rec_module_declarations
@@ -1885,6 +1919,35 @@ module_declaration_body:
 %inline module_expr_alias:
   id = mkrhs(mod_longident)
     { Mty.alias ~loc:(make_loc $sloc) id }
+;
+(* An implicit module declaration (in a signature). *)
+%inline implicit_module_declaration:
+  IMPLICIT MODULE
+  ext = ext attrs1 = attributes
+  uid = mkrhs(module_name)
+  body = module_declaration_body
+  attrs2 = post_item_attributes
+  {
+    let attrs = attrs1 @ attrs2 in
+    let loc = make_loc $sloc in
+    let docs = symbol_docs $sloc in
+    Md.mk uid body ~implicit_:Asttypes.Implicit ~attrs ~loc ~docs, ext
+  }
+;
+(* An implicit module alias declaration (in a signature). *)
+%inline implicit_module_alias:
+  IMPLICIT MODULE
+  ext = ext attrs1 = attributes
+  uid = mkrhs(module_name)
+  EQUAL
+  body = module_expr_alias
+  attrs2 = post_item_attributes
+  {
+    let attrs = attrs1 @ attrs2 in
+    let loc = make_loc $sloc in
+    let docs = symbol_docs $sloc in
+    Md.mk uid body ~implicit_:Asttypes.Implicit ~attrs ~loc ~docs, ext
+  }
 ;
 (* A module substitution (in a signature). *)
 module_subst:
@@ -2007,7 +2070,7 @@ class_fun_binding:
       COLON class_type EQUAL class_expr
         { Pcl_constraint($4, $2) }
     | simple_param_pattern class_fun_binding
-      { let (l,o,p) = $1 in Pcl_fun(l, o, p, $2) }
+      { let (l,o,p) = $1 in Pcl_fun(Parr_arg l, o, p, $2) }
     ) { $1 }
 ;
 
@@ -2029,7 +2092,7 @@ class_expr:
       { class_of_let_bindings ~loc:$sloc $1 $3 }
   | LET OPEN override_flag attributes mkrhs(mod_longident) IN class_expr
       { let loc = ($startpos($2), $endpos($5)) in
-        let od = Opn.mk ~override:$3 ~loc:(make_loc loc) $5 in
+        let od = Opn.mk ~flag:(Open_all $3) ~loc:(make_loc loc) $5 in
         mkclass ~loc:$sloc ~attrs:$4 (Pcl_open(od, $7)) }
   | class_expr attribute
       { Cl.attr $1 $2 }
@@ -2063,7 +2126,7 @@ class_fun_def:
   mkclass(
     simple_param_pattern MINUSGREATER e = class_expr
   | simple_param_pattern e = class_fun_def
-      { let (l,o,p) = $1 in Pcl_fun(l, o, p, e) }
+      { let (l,o,p) = $1 in Pcl_fun(Parr_arg l, o, p, e) }
   ) { $1 }
 ;
 %inline class_structure:
@@ -2165,7 +2228,7 @@ class_type:
       domain = tuple_type
       MINUSGREATER
       codomain = class_type
-        { Pcty_arrow(label, domain, codomain) }
+        { Pcty_arrow(Parr_arg label, domain, codomain) }
     ) { $1 }
  ;
 class_signature:
@@ -2183,7 +2246,7 @@ class_signature:
       { Cty.attr $1 $2 }
   | LET OPEN override_flag attributes mkrhs(mod_longident) IN class_signature
       { let loc = ($startpos($2), $endpos($5)) in
-        let od = Opn.mk ~override:$3 ~loc:(make_loc loc) $5 in
+        let od = Opn.mk ~flag:(Open_all $3) ~loc:(make_loc loc) $5 in
         mkcty ~loc:$sloc ~attrs:$4 (Pcty_open(od, $7)) }
 ;
 %inline class_parameters(parameter):
@@ -2611,9 +2674,9 @@ simple_expr:
   | name_tag %prec prec_constant_constructor
       { Pexp_variant($1, None) }
   | op(PREFIXOP) simple_expr
-      { Pexp_apply($1, [Nolabel,$2]) }
+      { Pexp_apply($1, [Papp_arg Nolabel,$2]) }
   | op(BANG {"!"}) simple_expr
-      { Pexp_apply($1, [Nolabel,$2]) }
+      { Pexp_apply($1, [Papp_arg Nolabel,$2]) }
   | LBRACELESS object_expr_content GREATERRBRACE
       { Pexp_override $2 }
   | LBRACELESS object_expr_content error
@@ -2696,20 +2759,28 @@ simple_expr:
 ;
 labeled_simple_expr:
     simple_expr %prec below_HASH
-      { (Nolabel, $1) }
+      { (Papp_arg Nolabel, $1) }
   | LABEL simple_expr %prec below_HASH
-      { (Labelled $1, $2) }
+      { (Papp_arg (Labelled $1), $2) }
   | TILDE label = LIDENT
       { let loc = $loc(label) in
-        (Labelled label, mkexpvar ~loc label) }
+        (Papp_arg (Labelled label), mkexpvar ~loc label) }
+  | LBRACE id = mkrhs(mod_longident) RBRACE
+      { let md = mkmod ~loc:$sloc (Pmod_ident id) in
+        (Papp_implicit, mkexp ~loc:$sloc (Pexp_pack (md, None))) }
+  | LBRACE id = mkrhs(mod_longident) params = mod_ext_parameters RBRACE
+      { (* FIXME: Identifier location should include parameters *)
+        let applied = mod_ext_apply id.txt params in
+        let md = mkmod ~loc:$sloc (Pmod_ident (mkrhs applied $loc(id))) in
+        (Papp_implicit, mkexp ~loc:$sloc (Pexp_pack (md, None))) }
   | TILDE LPAREN label = LIDENT ty = type_constraint RPAREN
-      { (Labelled label, mkexp_constraint ~loc:($startpos($2), $endpos)
+      { (Papp_arg (Labelled label), mkexp_constraint ~loc:($startpos($2), $endpos)
                            (mkexpvar ~loc:$loc(label) label) ty) }
   | QUESTION label = LIDENT
       { let loc = $loc(label) in
-        (Optional label, mkexpvar ~loc label) }
+        (Papp_arg (Optional label), mkexpvar ~loc label) }
   | OPTLABEL simple_expr %prec below_HASH
-      { (Optional $1, $2) }
+      { (Papp_arg (Optional $1), $2) }
 ;
 %inline lident_list:
   xs = mkrhs(LIDENT)+
@@ -2857,10 +2928,15 @@ fun_param_as_list:
           (fun x -> { pparam_loc = loc; pparam_desc = Pparam_newtype x })
           ty_params
       }
+  | LBRACE name = UIDENT COLON pkg = implicit_module_type RBRACE
+      { [ { pparam_loc = make_loc $sloc; pparam_desc = Pparam_implicit (name, pkg) } ] }
   | simple_param_pattern
       { let a, b, c = $1 in
         [ { pparam_loc = make_loc $sloc; pparam_desc = Pparam_val (a, b, c) } ]
       }
+;
+implicit_module_type:
+  | package_type_      { $1 }
 ;
 fun_params:
   | nonempty_concat(fun_param_as_list) { $1 }
@@ -3741,7 +3817,13 @@ function_type:
       domain = extra_rhs(param_type)
       MINUSGREATER
       codomain = function_type
-        { Ptyp_arrow(label, domain, codomain) }
+        { Ptyp_arrow(Parr_arg label, domain, codomain) }
+    )
+    { $1 }
+  | mktyp(
+      LBRACE name = UIDENT COLON pkg = implicit_module_type RBRACE MINUSGREATER
+      codomain = function_type
+        { Ptyp_arrow(Parr_implicit name, Typ.mk ~loc:pkg.ppt_loc (Ptyp_package pkg), codomain) }
     )
     { $1 }
   (* The next two cases are for labeled tuples - see comment on [tuple_type]
@@ -3765,7 +3847,7 @@ function_type:
             mktyp ~loc:tuple_loc (Ptyp_tuple ((None, ty) :: ltys))
           in
           let domain = extra_rhs_core_type domain ~pos:(snd tuple_loc) in
-          Ptyp_arrow(Labelled label, domain, codomain) }
+          Ptyp_arrow(Parr_arg (Labelled label), domain, codomain) }
     )
     { $1 }
   | label = LIDENT COLON proper_tuple_type %prec MINUSGREATER
@@ -4163,6 +4245,18 @@ mod_ext_longident:
       { lapply ~loc:$sloc $1 $loc($1) $3 $loc($3) }
   | mod_ext_longident LPAREN error
       { expecting $loc($3) "module path" }
+  | mod_ext_longident LBRACE mod_ext_longident RBRACE
+      { Lapply(mkrhs $1 $loc($1), mkrhs $3 $loc($3), Asttypes.Implicit) }
+;
+mod_ext_parameters:
+  | LPAREN id = mod_ext_longident RPAREN
+      { [id, Asttypes.Nonimplicit] }
+  | LBRACE id = mod_ext_longident RBRACE
+      { [id, Asttypes.Implicit] }
+  | params = mod_ext_parameters LPAREN id = mod_ext_longident RPAREN
+      { (id, Asttypes.Nonimplicit) :: params }
+  | params = mod_ext_parameters LBRACE id = mod_ext_longident RBRACE
+      { (id, Asttypes.Implicit) :: params }
 ;
 mty_longident:
     mk_longident(mod_ext_longident,ident) { $1 }
@@ -4291,6 +4385,10 @@ virtual_with_private_flag:
 %inline override_flag:
     /* empty */                                 { Fresh }
   | BANG                                        { Override }
+;
+%inline open_flag:
+    IMPLICIT                                    { Open_implicit }
+  | override_flag                               { Open_all $1 }
 ;
 subtractive:
   | MINUS                                       { "-" }

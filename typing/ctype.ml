@@ -190,6 +190,25 @@ let global_level = s_ref 0
 let saved_levels = s_ref []
 
 let get_current_level () = !current_level
+
+let new_declaration expansion_scope manifest =
+  {
+    type_params = [];
+    type_arity = 0;
+    type_kind = Type_abstract Definition;
+    type_private = Public;
+    type_manifest = manifest;
+    type_variance = [];
+    type_separability = [];
+    type_is_newtype = true;
+    type_expansion_scope = expansion_scope;
+    type_loc = Location.none;
+    type_attributes = [];
+    type_immediate = Unknown;
+    type_unboxed_default = false;
+    type_uid = Uid.internal_not_actually_unique;
+  }
+
 let init_def level =
   assert (level <= generic_level);
   current_level := level; nongen_level := level
@@ -839,6 +858,17 @@ let set_modtype_of_package f =
 
 let modtype_of_package env loc pack =
   !modtype_of_package env loc pack
+
+let modtype_of_tpackage env ty =
+  match get_desc ty with
+  | Tpackage pack ->
+      modtype_of_package env Location.none pack
+  | _ -> assert false
+
+let bind_implicit_arg id ty env =
+  let mty = modtype_of_tpackage env ty in
+  let env = Env.add_module id Mp_present mty env in
+  Env.set_implicit_level id 0 env
 
 let normalize_or_raise_escape env p =
   match Env.try_normalize_modtype_path env p with
@@ -2385,6 +2415,8 @@ let occur_univar_or_unscoped ?(inj_only=false) env ty =
       | Tpoly (ty, tyl) ->
           let bound_uv = List.fold_right TypeSet.add tyl bound_uv in
           occur_rec env bound_uv bound_id ty
+      | Tconstr (p, _, _) when Env.implicit_cannot_occur p env ->
+          raise_escape_exn (Univ ty)
       | Tconstr (p, tl, _) -> begin
           let id_escape = Path.check_for_unbound_unscoped_idents bound_id p in
           match id_escape with
@@ -2836,9 +2868,12 @@ let reify ?eqn uenv t =
   iterator t
 
 let find_expansion_scope env path =
-  match Env.find_type path env with
-  | { type_manifest = None ; _ } | exception Not_found -> generic_level
-  | decl -> decl.type_expansion_scope
+  let implicit_lv = Env.implicit_level path env in
+  if implicit_lv > 0 then implicit_lv
+  else
+    match Env.find_type path env with
+    | { type_manifest = None ; _ } | exception Not_found -> generic_level
+    | decl -> decl.type_expansion_scope
 
 let is_instantiable env p =
   try
@@ -2861,9 +2896,33 @@ let compatible_labels ~in_pattern_mode l1 l2 =
   || (!Clflags.classic || in_pattern_mode)
       && not (is_optional l1 || is_optional l2)
 
+(* Like compatible_labels but for arrow_flag (used with Tarrow) *)
+let compatible_arrow_flags ~in_pattern_mode l1 l2 =
+  l1 = l2
+  || (!Clflags.classic || in_pattern_mode)
+      && not (Btype.arrow_is_optional l1 || Btype.arrow_is_optional l2)
+
+let arrows_are_compatible l1 l2 =
+  match l1, l2 with
+  | Tarr_arg (Nolabel | Labelled _), Tarr_arg (Nolabel | Labelled _) ->
+      true
+  | Tarr_arg (Optional _), Tarr_arg (Optional _) -> true
+  | Tarr_implicit _, Tarr_implicit _ -> true
+  | _ -> false
+
+let classic_arrows_are_compatible l1 l2 =
+  l1 = l2 || !Clflags.classic && arrows_are_compatible l1 l2
+
+let arg_label_of_arrow_flag = function
+  | Tarr_arg l -> l
+  | Tarr_implicit _ -> Nolabel
+
 let eq_labels error_mode ~in_pattern_mode l1 l2 =
-  if not (compatible_labels ~in_pattern_mode l1 l2) then
-    raise_for error_mode (Function_label_mismatch {got=l1; expected=l2})
+  if not (compatible_arrow_flags ~in_pattern_mode l1 l2) then
+    raise_for error_mode
+      (Function_label_mismatch
+         {got = arg_label_of_arrow_flag l1;
+          expected = arg_label_of_arrow_flag l2})
 
 (* Check for datatypes carefully; see PR#6348 *)
 let expands_to_datatype env p =
@@ -2912,8 +2971,15 @@ let rec mcomp type_pairs env t1 t2 =
         | (Tvar _, _)
         | (_, Tvar _)  ->
             ()
+        | (Tarrow (Tarr_implicit id1, t1, u1, _),
+           Tarrow (Tarr_implicit id2, t2, u2, _)) ->
+            mcomp type_pairs env t1 t2;
+            let mty = modtype_of_tpackage env t1 in
+            let env = Env.add_module id1 Mp_present mty env in
+            let subst = Subst.add_module id2 (Path.Pident id1) Subst.identity in
+            mcomp type_pairs env u1 (Subst.type_expr subst u2);
         | (Tarrow (l1, t1, u1, _), Tarrow (l2, t2, u2, _))
-          when compatible_labels ~in_pattern_mode:true l1 l2 ->
+          when compatible_arrow_flags ~in_pattern_mode:true l1 l2 ->
             mcomp type_pairs env t1 t2;
             mcomp type_pairs env u1 u2;
         | (Ttuple tl1, Ttuple tl2) ->
@@ -2934,11 +3000,11 @@ let rec mcomp type_pairs env t1 t2 =
           when compatible_labels ~in_pattern_mode:true l1 l2 ->
             mcomp type_pairs env u1 u2
         | (Tfunctor (l1, _, pack1, u1), Tarrow (l2, t2, u2, _))
-          when compatible_labels ~in_pattern_mode:true l1 l2 ->
+          when compatible_arrow_flags ~in_pattern_mode:true (Tarr_arg l1) l2 ->
             mcomp type_pairs env (newmono_package pack1) t2;
             mcomp type_pairs env u1 u2
         | (Tarrow (l1, t1, u1, _), Tfunctor (l2, _, pack2, u2))
-          when compatible_labels ~in_pattern_mode:true l1 l2 ->
+          when compatible_arrow_flags ~in_pattern_mode:true l1 (Tarr_arg l2) ->
             mcomp type_pairs env t1 (newmono_package pack2);
             mcomp type_pairs env u1 u2
         (*
@@ -3397,7 +3463,34 @@ and unify3 uenv t1' t2' =
     end;
     try
       begin match (d1, d2) with
-        (Tarrow (l1, t1, u1, c1), Tarrow (l2, t2, u2, c2)) ->
+        (Tarrow (Tarr_implicit id1, t1, u1, c1),
+         Tarrow (Tarr_implicit id2, t2, u2, c2)) ->
+          unify uenv t1 t2;
+          let env = get_env uenv in
+          let mty = modtype_of_tpackage env t1 in
+          let env' = Env.add_module id1 Mp_present mty env in
+          let env' = Env.forbid_implicit_occur id1 env' in
+          let env' = Env.forbid_implicit_occur id2 env' in
+          let env' = Env.set_implicit_level id1 0 env' in
+          let env' = Env.set_implicit_level id2 0 env' in
+          let subst = Subst.add_module id2 (Path.Pident id1) Subst.identity in
+          let u2 = Subst.type_expr subst u2 in
+          let uenv' = match uenv with
+            | Expression exp -> Expression {exp with env = env'}
+            | Pattern {penv} ->
+                Pattern_env.set_env penv env';
+                uenv
+          in
+          unify uenv' u1 u2;
+          Transient_expr.set_desc (Transient_expr.repr t2')
+            (Tarrow (Tarr_implicit id1, t2, u2, c2));
+          begin match is_commu_ok c1, is_commu_ok c2 with
+          | false, true -> set_commu_ok c1
+          | true, false -> set_commu_ok c2
+          | false, false -> link_commu ~inside:c1 c2
+          | true, true -> ()
+          end
+      | (Tarrow (l1, t1, u1, c1), Tarrow (l2, t2, u2, c2)) ->
           eq_labels Unify ~in_pattern_mode:(in_pattern_mode uenv) l1 l2;
           unify uenv t1 t2; unify uenv u1 u2;
           begin match is_commu_ok c1, is_commu_ok c2 with
@@ -3408,7 +3501,8 @@ and unify3 uenv t1' t2' =
           end
       | (Tfunctor (l1, id1, pack1, ty1),
          Tfunctor (l2, id2, pack2, ty2)) ->
-            eq_labels Unify ~in_pattern_mode:(in_pattern_mode uenv) l1 l2;
+            eq_labels Unify ~in_pattern_mode:(in_pattern_mode uenv)
+              (Tarr_arg l1) (Tarr_arg l2);
             begin try
               unify_package uenv (get_level t1') pack1 (get_level t2') pack2
             with Unify_trace trace ->
@@ -3421,7 +3515,8 @@ and unify3 uenv t1' t2' =
             enter_functor_for_unify uenv id1 (newty d1) id2 t2' mty2
                             (fun uenv -> unify uenv ty1 ty2)
       | (Tfunctor (l1, id1, pack1, u1), Tarrow (l2, t2, u2, c2)) ->
-            eq_labels Unify ~in_pattern_mode:(in_pattern_mode uenv) l1 l2;
+            eq_labels Unify ~in_pattern_mode:(in_pattern_mode uenv)
+              (Tarr_arg l1) l2;
             unify uenv (newmono_package pack1) t2;
             let env = get_env uenv in
             let mty1 = modtype_of_package env Location.none pack1 in
@@ -3431,7 +3526,8 @@ and unify3 uenv t1' t2' =
             unify uenv u1 u2;
             if not (is_commu_ok c2) then set_commu_ok c2
       | (Tarrow (l1, t1, u1, c1), Tfunctor (l2, id2, pack2, u2)) ->
-            eq_labels Unify ~in_pattern_mode:(in_pattern_mode uenv) l1 l2;
+            eq_labels Unify ~in_pattern_mode:(in_pattern_mode uenv)
+              l1 (Tarr_arg l2);
             unify uenv t1 (newmono_package pack2);
             let env = get_env uenv in
             let mty2 = modtype_of_package env Location.none pack2 in
@@ -3960,7 +4056,7 @@ let instance_funct_nondep env l (tfun : Types.tfunctor) mty =
   | exception Unify_trace trace ->
     let got = newty (Tfunctor (l, tfun.id_us, tfun.pack, tfun.ty)) in
     let expected =
-      newty (Tarrow (l, newmono_package tfun.pack, newvar (), commu_ok))
+      newty (Tarrow (Tarr_arg l, newmono_package tfun.pack, newvar (), commu_ok))
     in
     let trace = Diff {got; expected} :: trace in
     raise (Unify (expand_to_unification_error env trace))
@@ -3975,8 +4071,8 @@ let instance_funct_nondep env l (tfun : Types.tfunctor) mty =
 type filter_arrow_failure =
   | Unification_error of unification_error
   | Label_mismatch of
-      { got           : arg_label
-      ; expected      : arg_label
+      { got           : arrow_flag
+      ; expected      : arrow_flag
       ; expected_type : type_expr
       }
   | Not_a_function
@@ -4003,7 +4099,7 @@ let function_type l ~param_hole level =
     end
   in
   let t2 = newvar2 level in
-  let t' = newty2 ~level (Tarrow (l, t1, t2, commu_ok)) in
+  let t' = newty2 ~level (Tarrow (Tarr_arg l, t1, t2, commu_ok)) in
   t', t1, t2
 
 let arrow_unification_error ~in_apply env t t' trace =
@@ -4031,15 +4127,19 @@ let filter_arrow env ~in_apply t l ~param_hole =
     match get_desc t with
     | Tvar _ -> Ok (arrow_unify_var ~param_hole l t)
     | Tarrow(l', ty_param, ty_ret, _) ->
-        if l = l' || !Clflags.classic && l = Nolabel && not (is_optional l')
+        let l_arr = Tarr_arg l in
+        if l_arr = l'
+           || !Clflags.classic && l = Nolabel
+              && not (Btype.arrow_is_optional l')
         then Ok { ty_param; ty_ret }
         else Error (Label_mismatch
-                      { got = l; expected = l'; expected_type = t })
+                      { got = l_arr; expected = l'; expected_type = t })
     | Tfunctor (l', id_us, pack, ty_ret) ->
         if not (l = l'
-                || !Clflags.classic && l = Nolabel && not (is_optional l'))
+                || !Clflags.classic && l = Nolabel
+                   && not (Btype.is_optional l'))
         then Error (Label_mismatch
-                      { got = l; expected = l'; expected_type = t })
+                      { got = Tarr_arg l; expected = Tarr_arg l'; expected_type = t })
         else begin
           let mty = modtype_of_package env Location.none pack in
           match
@@ -4047,12 +4147,12 @@ let filter_arrow env ~in_apply t l ~param_hole =
           with
           | exception Unify_trace trace ->
               let pack = newmono_package pack in
-              let t' = newty (Tarrow (l, pack, newvar (), commu_ok)) in
+              let t' = newty (Tarrow (Tarr_arg l, pack, newvar (), commu_ok)) in
               arrow_unification_error ~in_apply env t t' trace
           | () ->
               let ty_param = newmono_package ~level:(get_level t) pack in
               let t' = newty2 ~level:(get_level t)
-                  (Tarrow (l, ty_param, ty_ret, commu_ok))
+                  (Tarrow (Tarr_arg l, ty_param, ty_ret, commu_ok))
               in
               link_type t t';
               Ok { ty_param; ty_ret }
@@ -4070,7 +4170,8 @@ let filter_functor env t l =
           if compatible_labels ~in_pattern_mode:false l l'
           then Ok (Some (id, pack, ct))
           else Error (Label_mismatch
-                        { got = l; expected = l'; expected_type = t })
+                        { got = Tarr_arg l; expected = Tarr_arg l';
+                          expected_type = t })
       | Tvar _ -> Ok None
       | _ -> Error Not_a_function
 
@@ -4598,12 +4699,17 @@ let rec moregen type_pairs env t1 t2 =
               moregen_occur env (get_level t1') t2;
               update_scope_for Moregen (get_scope t1') t2;
               link_type t1' t2
+          | (Tarrow (Tarr_implicit id1, t1, u1, _),
+             Tarrow (Tarr_implicit id2, t2, u2, _)) ->
+              moregen type_pairs env t1 t2;
+              let subst = Subst.add_module id2 (Path.Pident id1) Subst.identity in
+              moregen type_pairs env u1 (Subst.type_expr subst u2)
           | (Tarrow (l1, t1, u1, _), Tarrow (l2, t2, u2, _)) ->
               eq_labels Moregen ~in_pattern_mode:false l1 l2;
               moregen type_pairs env t1 t2;
               moregen type_pairs env u1 u2
           | (Tfunctor (l1, id1, pack1, t1), Tfunctor (l2, id2, pack2, t2)) ->
-              eq_labels Moregen ~in_pattern_mode:false l1 l2;
+              eq_labels Moregen ~in_pattern_mode:false (Tarr_arg l1) (Tarr_arg l2);
               moregen_package type_pairs env
                 (get_level t1') pack1 (get_level t2') pack2;
               let mty1 = modtype_of_package env Location.none pack1 in
@@ -4611,7 +4717,7 @@ let rec moregen type_pairs env t1 t2 =
               enter_functor_with_mtys_for Moregen env id1 mty1 t1' id2 mty2 t2'
                   (fun new_env -> moregen type_pairs new_env t1 t2)
           | Tarrow (l1, t1, u1, _), Tfunctor (l2, id2, pack2, u2) ->
-                eq_labels Moregen ~in_pattern_mode:false l1 l2;
+                eq_labels Moregen ~in_pattern_mode:false l1 (Tarr_arg l2);
                 let t2 = newmono_package pack2 in
                 moregen type_pairs env t1 t2;
                 let mty = modtype_of_package env Location.none pack2 in
@@ -4620,7 +4726,7 @@ let rec moregen type_pairs env t1 t2 =
                 identifier_escape_for Moregen env' [id2] u2;
                 moregen type_pairs env u1 u2
           | Tfunctor (l1, id1, pack1, u1), Tarrow (l2, t2, u2, _) ->
-                eq_labels Moregen ~in_pattern_mode:false l1 l2;
+                eq_labels Moregen ~in_pattern_mode:false (Tarr_arg l1) l2;
                 let t1 = newmono_package pack1 in
                 moregen type_pairs env t1 t2;
                 let mty = modtype_of_package env Location.none pack1 in
@@ -4951,6 +5057,23 @@ let does_match env ty ty' =
                  (*  Equivalence between parameterized types  *)
                  (*********************************************)
 
+type equality_equation = {
+  eq_lhs : type_expr;
+  eq_lhs_params : type_expr list;
+  eq_lhs_path : Path.t;
+  eq_rhs : type_expr;
+}
+
+let equality_equations
+  : equality_equation list ref Ident.Map.t ref
+  = ref Ident.Map.empty
+
+let with_equality_equations tbl f =
+  let equality_equations' = !equality_equations in
+  equality_equations := tbl;
+  try_finally f
+    ~always:(fun () -> equality_equations := equality_equations')
+
 let expand_head_rigid env ty =
   let old = !rigid_variants in
   rigid_variants := true;
@@ -5001,12 +5124,20 @@ let rec eqtype rename type_pairs subst env t1 t2 =
           match (get_desc t1', get_desc t2') with
             (Tvar _, Tvar _) when rename ->
               eqtype_subst type_pairs subst t1' t2'
+          | (Tarrow (Tarr_implicit id1, t1, u1, _),
+             Tarrow (Tarr_implicit id2, t2, u2, _)) ->
+              eqtype rename type_pairs subst env t1 t2;
+              let mty = modtype_of_tpackage env t1 in
+              let env = Env.add_module id1 Mp_present mty env in
+              let s = Subst.add_module id2 (Path.Pident id1) Subst.identity in
+              let u2 = Subst.type_expr s u2 in
+              eqtype rename type_pairs subst env u1 u2
           | (Tarrow (l1, t1, u1, _), Tarrow (l2, t2, u2, _)) ->
               eq_labels Equality ~in_pattern_mode:false l1 l2;
               eqtype rename type_pairs subst env t1 t2;
               eqtype rename type_pairs subst env u1 u2
           | (Tfunctor (l1, id1, pack1, t1), Tfunctor (l2, id2, pack2, t2)) ->
-              eq_labels Equality ~in_pattern_mode:false l1 l2;
+              eq_labels Equality ~in_pattern_mode:false (Tarr_arg l1) (Tarr_arg l2);
               eqtype_package rename type_pairs subst env
                 (get_level t1') pack1 (get_level t2') pack2;
               let mty1 = modtype_of_package env Location.none pack1 in
@@ -5014,7 +5145,7 @@ let rec eqtype rename type_pairs subst env t1 t2 =
               enter_functor_with_mtys_for Equality env id1 mty1 t1' id2 mty2 t2'
                   (fun new_env -> eqtype rename type_pairs subst new_env t1 t2)
           | (Tfunctor (l1, id1, pack1, u1), Tarrow (l2, t2, u2, _)) ->
-              eq_labels Equality ~in_pattern_mode:false l1 l2;
+              eq_labels Equality ~in_pattern_mode:false (Tarr_arg l1) l2;
               let t1 = newmono_package pack1 in
               eqtype rename type_pairs subst env t1 t2;
               let mty = modtype_of_package env Location.none pack1 in
@@ -5023,7 +5154,7 @@ let rec eqtype rename type_pairs subst env t1 t2 =
               identifier_escape_for Equality env' [id1] u1;
               eqtype rename type_pairs subst env u1 u2
           | (Tarrow (l1, t1, u1, _), Tfunctor (l2, id2, pack2, u2)) ->
-              eq_labels Equality ~in_pattern_mode:false l1 l2;
+              eq_labels Equality ~in_pattern_mode:false l1 (Tarr_arg l2);
               let t2 = newmono_package pack2 in
               eqtype rename type_pairs subst env t1 t2;
               let mty = modtype_of_package env Location.none pack2 in
@@ -5059,11 +5190,76 @@ let rec eqtype rename type_pairs subst env t1 t2 =
                 (eqtype rename type_pairs subst env)
           | (Tunivar _, Tunivar _) ->
               unify_univar_for Equality t1' t2' !univar_pairs
+
+          | Tconstr (p1, tl1, _), Tconstr (p2, tl2, _)
+            when (match Path.head_opt p1 with
+                  | Some h -> Ident.Map.mem h !equality_equations
+                  | None -> false)
+              && (match Path.head_opt p2 with
+                  | Some h -> Ident.Map.mem h !equality_equations
+                  | None -> false) ->
+              let (tl, tr) =
+                if (tl1 = [] && tl2 <> []) then (t1', t2')
+                else if (tl2 = [] && tl1 <> []) then (t2', t1')
+                else if p1 < p2 then (t1', t2')
+                else (t2', t1') in
+              eqtype_modulo_equation rename type_pairs subst env tl tr
+
+          | Tconstr (p, _, _), _
+            when (match Path.head_opt p with
+                  | Some h -> Ident.Map.mem h !equality_equations
+                  | None -> false) ->
+              eqtype_modulo_equation rename type_pairs subst env t1' t2'
+
+          | _, Tconstr (p, _, _)
+            when (match Path.head_opt p with
+                  | Some h -> Ident.Map.mem h !equality_equations
+                  | None -> false) ->
+              eqtype_modulo_equation rename type_pairs subst env t2' t1'
+
           | (_, _) ->
               raise_unexplained_for Equality
         end
   with Equality_trace trace ->
     raise_trace_for Equality (Diff {got = t1; expected = t2} :: trace)
+
+and eqtype_modulo_equation rename type_pairs subst env lhs rhs =
+  match get_desc lhs with
+  | Tconstr (path, [], _) ->
+    let hd = match Path.head_opt path with
+      | Some h -> h | None -> raise_unexplained_for Equality in
+    let equations =
+      try Ident.Map.find hd !equality_equations
+      with Not_found -> assert false
+    in
+    begin try
+      let same { eq_lhs_path ; eq_lhs_params; _ } =
+        let result = eq_lhs_path = path in
+        if result then assert (eq_lhs_params = []);
+        result
+      in
+      let ty = List.find same !equations in
+      eqtype rename type_pairs subst env ty.eq_rhs rhs
+    with Not_found ->
+      let equation = {
+        eq_lhs = lhs; eq_lhs_params = [];
+        eq_lhs_path = path; eq_rhs = rhs;
+      } in
+      equations := equation :: !equations
+    end
+  | Tconstr (path, params, _) ->
+    let hd = match Path.head_opt path with
+      | Some h -> h | None -> raise_unexplained_for Equality in
+    let equations =
+      try Ident.Map.find hd !equality_equations
+      with Not_found -> assert false
+    in
+    let equation = {
+      eq_lhs = lhs; eq_lhs_params = params;
+      eq_lhs_path = path; eq_rhs = rhs;
+    } in
+    equations := equation :: !equations
+  | _ -> assert false
 
 and eqtype_list_same_length rename type_pairs subst env tl1 tl2 =
   List.iter2 (eqtype rename type_pairs subst env) tl1 tl2
@@ -5232,6 +5428,9 @@ let equal env rename tyl1 tyl2 =
   try eqtype_list_same_length rename (TypePairs.create 11) subst env tyl1 tyl2
   with Equality_trace trace ->
     raise (Equality (expand_to_equality_error env trace !subst))
+
+let equal' env rename tyl1 tyl2 =
+  eqtype_list rename (TypePairs.create 11) (ref []) env tyl1 tyl2
 
 let is_equal env rename tyl1 tyl2 =
   match equal env rename tyl1 tyl2 with
@@ -5512,7 +5711,7 @@ let match_class_declarations env patt_params patt_type subj_params subj_type =
         (* Use moregeneral for class parameters, need to recheck everything to
            keeps relationships (PR#4824) *)
         let clty_params =
-          List.fold_right (fun ty cty -> Cty_arrow (Labelled "*",ty,cty)) in
+          List.fold_right (fun ty cty -> Cty_arrow (Tarr_arg (Labelled "*"),ty,cty)) in
         match_class_types ~trace:false env
           (clty_params patt_params patt_type)
           (clty_params subj_params subj_type)
@@ -5795,7 +5994,7 @@ let rec subtype_rec env trace t1 t2 constraints =
       (Tvar _, _) | (_, Tvar _) ->
         (env, trace, t1, t2, !univar_pairs)::constraints
     | (Tarrow(l1, t1, u1, _), Tarrow(l2, t2, u2, _))
-      when compatible_labels ~in_pattern_mode:false l1 l2 ->
+      when compatible_arrow_flags ~in_pattern_mode:false l1 l2 ->
         (* the trace will be updated at the next step due to the Tpoly wrapping
            of parameter. *)
         let constraints = subtype_rec env trace t2 t1 constraints in
@@ -5821,7 +6020,7 @@ let rec subtype_rec env trace t1 t2 constraints =
           with Escape _ -> (env, trace, t1, t2, !univar_pairs)::constraints
         end
     | (Tfunctor (l1, id1, pack1, u1), Tarrow (l2, fcm2, u2, _))
-      when compatible_labels ~in_pattern_mode:false l1 l2 ->
+      when compatible_arrow_flags ~in_pattern_mode:false (Tarr_arg l1) l2 ->
         let fcm1 = newmono_package pack1 in
         let constraints =
           (* [trace] : see [(Tarrow, Tarrow)] comment *)
@@ -5835,7 +6034,7 @@ let rec subtype_rec env trace t1 t2 constraints =
             (env, trace, t1, t2, !univar_pairs)::constraints
         end
     | (Tarrow (l1, fcm1, u1, _),  Tfunctor (l2, id2, pack2, u2))
-      when compatible_labels ~in_pattern_mode:false l1 l2 ->
+      when compatible_arrow_flags ~in_pattern_mode:false l1 (Tarr_arg l2) ->
         let fcm2 = newmono_package pack2 in
         let constraints =
           (* [trace] : see [(Tarrow, Tarrow)] comment *)
@@ -6332,7 +6531,7 @@ let arrow_spine env ty =
       | Tfunctor (label, mod_id, package, ty_ret) ->
         arrow_spine_rec
           ~mark
-          ((label, Arg_module (mod_id, package)) :: labels)
+          ((Tarr_arg label, Arg_module (mod_id, package)) :: labels)
           ty_ret
       | _ -> List.rev labels, Ret_type ty)
     else List.rev labels, Ret_cycle

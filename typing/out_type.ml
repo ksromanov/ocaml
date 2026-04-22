@@ -577,7 +577,8 @@ let rec lid_of_path = function
       Longident.Ldot (Location.mknoloc (lid_of_path p1), Location.mknoloc s)
   | Path.Papply (p1, p2) ->
       Longident.Lapply
-        (Location.mknoloc (lid_of_path p1), Location.mknoloc (lid_of_path p2))
+        (Location.mknoloc (lid_of_path p1), Location.mknoloc (lid_of_path p2),
+         Asttypes.Nonimplicit)
   | Path.Pextra_ty (p, Pext_ty) -> lid_of_path p
 
 let is_unambiguous path env =
@@ -1034,7 +1035,7 @@ module Aliases = struct
       | Tpoly(ty, tyl) ->
           List.iter add tyl;
           mark_loops_rec visited ty
-      | Tarrow (Optional _, e1, e2, _) ->
+      | Tarrow (Tarr_arg (Optional _), e1, e2, _) ->
           begin match get_desc e1 with
           | Tpoly (a, []) ->
               begin match get_desc a with
@@ -1129,12 +1130,17 @@ let rec tree_of_typexp mode ty =
         let non_gen = is_non_gen mode ty in
         let name_gen = Variable_names.new_var_name ~non_gen ty in
         Otyp_var (non_gen, Variable_names.name_of_type name_gen tty)
-    | Tarrow(l, ty1, ty2, _) ->
+    | Tarrow(arr, ty1, ty2, _) ->
         let lab =
-          if !print_labels || is_optional l then l else Nolabel
+          if !print_labels || arrow_is_optional arr
+          then
+            match arr with
+            | Tarr_arg l -> l
+            | Tarr_implicit id -> Labelled ("{" ^ Ident.name id ^ "}")
+          else Nolabel
         in
         let t1 =
-          if is_optional l then
+          if arrow_is_optional arr then
             if tpoly_is_mono ty1 then
               let mono = tpoly_get_mono ty1 in
               match printer_get_desc mono with
@@ -1796,12 +1802,17 @@ let rec tree_of_class_type mode params =
           csil all_meths
       in
       Octy_signature (self_ty, List.rev csil)
-  | Cty_arrow (l, ty, cty) ->
+  | Cty_arrow (arr, ty, cty) ->
       let lab =
-        if !print_labels || is_optional l then l else Nolabel
+        if !print_labels || arrow_is_optional arr
+        then
+          match arr with
+          | Tarr_arg l -> l
+          | Tarr_implicit id -> Labelled ("{" ^ Ident.name id ^ "}")
+        else Nolabel
       in
       let tr =
-       if is_optional l then
+       if arrow_is_optional arr then
          match get_desc ty with
          | Tconstr(path, [ty], _) when Path.same path Predef.path_option ->
              tree_of_typexp mode ty
@@ -1937,7 +1948,7 @@ let rec tree_of_modtype ?(ellipsis=false) = function
 and tree_of_functor_parameter = function
   | Unit ->
       None, fun k -> k
-  | Named (param, ty_arg) ->
+  | Named (param, ty_arg) | Implicit (param, ty_arg) ->
       let name, env =
         match param with
         | None -> None, fun env -> env

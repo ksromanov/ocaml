@@ -85,7 +85,7 @@ and raw_type_desc ppf = function
     Tvar name -> fprintf ppf "Tvar %a" print_name name
   | Tarrow(l,t1,t2,c) ->
       fprintf ppf "@[<hov1>Tarrow(\"%s\",@,%a,@,%a,@,%s)@]"
-        (string_of_label l) raw_type t1 raw_type t2
+        (Btype.label_name_of_arrow_raw l) raw_type t1 raw_type t2
         (if is_commu_ok c then "Cok" else "Cunknown")
   | Tfunctor (l, id, {pack_path; pack_constraints}, t2) ->
     fprintf ppf "@[<hov1>Tfunctor(\"%s\",@,%a,@,(%a,@,%a),@,%a)@]"
@@ -266,5 +266,9 @@ and raw_func_param ppf = function
     Unit -> fprintf ppf "Unit"
   | Named (ido, mty) ->
       fprintf ppf "@[<hov>Named(@,%a,@,%a)@]"
+        (raw_option Ident.print) ido
+        modtype mty
+  | Types.Implicit (ido, mty) ->
+      fprintf ppf "@[<hov>Implicit(@,%a,@,%a)@]"
         (raw_option Ident.print) ido
         modtype mty

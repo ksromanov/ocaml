@@ -71,7 +71,7 @@ module Typ :
 
     val any: ?loc:loc -> ?attrs:attrs -> unit -> core_type
     val var: ?loc:loc -> ?attrs:attrs -> string -> core_type
-    val arrow: ?loc:loc -> ?attrs:attrs -> arg_label -> core_type -> core_type
+    val arrow: ?loc:loc -> ?attrs:attrs -> Parsetree.arrow_flag -> core_type -> core_type
                -> core_type
     val tuple: ?loc:loc -> ?attrs:attrs -> (string option * core_type) list
                -> core_type
@@ -151,7 +151,7 @@ module Exp:
                    -> type_constraint option -> function_body
                    -> expression
     val apply: ?loc:loc -> ?attrs:attrs -> expression
-               -> (arg_label * expression) list -> expression
+               -> (Parsetree.apply_flag * expression) list -> expression
     val match_: ?loc:loc -> ?attrs:attrs -> expression -> case list
                 -> expression
     val try_: ?loc:loc -> ?attrs:attrs -> expression -> case list -> expression
@@ -287,9 +287,8 @@ module Mod:
     val structure: ?loc:loc -> ?attrs:attrs -> structure -> module_expr
     val functor_: ?loc:loc -> ?attrs:attrs ->
       functor_parameter -> module_expr -> module_expr
-    val apply: ?loc:loc -> ?attrs:attrs -> module_expr -> module_expr ->
-      module_expr
-    val apply_unit: ?loc:loc -> ?attrs:attrs -> module_expr -> module_expr
+    val apply: ?loc:loc -> ?attrs:attrs -> module_expr ->
+      Parsetree.module_argument -> module_expr
     val constraint_: ?loc:loc -> ?attrs:attrs -> module_expr -> module_type ->
       module_expr
     val unpack: ?loc:loc -> ?attrs:attrs -> expression -> module_expr
@@ -349,6 +348,7 @@ module Str:
 module Md:
   sig
     val mk: ?loc:loc -> ?attrs:attrs -> ?docs:docs -> ?text:text ->
+      ?implicit_:Asttypes.implicit_flag ->
       str_opt -> module_type -> module_declaration
   end
 
@@ -370,6 +370,7 @@ module Mtd:
 module Mb:
   sig
     val mk: ?loc:loc -> ?attrs:attrs -> ?docs:docs -> ?text:text ->
+      ?implicit_:Asttypes.implicit_flag ->
       str_opt -> module_expr -> module_binding
   end
 
@@ -377,7 +378,7 @@ module Mb:
 module Opn:
   sig
     val mk: ?loc: loc -> ?attrs:attrs -> ?docs:docs ->
-      ?override:override_flag -> 'a -> 'a open_infos
+      ?flag:Asttypes.open_flag -> 'a -> 'a open_infos
   end
 
 (** Includes *)
@@ -405,7 +406,7 @@ module Cty:
 
     val constr: ?loc:loc -> ?attrs:attrs -> lid -> core_type list -> class_type
     val signature: ?loc:loc -> ?attrs:attrs -> class_signature -> class_type
-    val arrow: ?loc:loc -> ?attrs:attrs -> arg_label -> core_type ->
+    val arrow: ?loc:loc -> ?attrs:attrs -> Parsetree.arrow_flag -> core_type ->
       class_type -> class_type
     val extension: ?loc:loc -> ?attrs:attrs -> extension -> class_type
     val open_: ?loc:loc -> ?attrs:attrs -> open_description -> class_type
@@ -439,10 +440,10 @@ module Cl:
 
     val constr: ?loc:loc -> ?attrs:attrs -> lid -> core_type list -> class_expr
     val structure: ?loc:loc -> ?attrs:attrs -> class_structure -> class_expr
-    val fun_: ?loc:loc -> ?attrs:attrs -> arg_label -> expression option ->
+    val fun_: ?loc:loc -> ?attrs:attrs -> Parsetree.arrow_flag -> expression option ->
       pattern -> class_expr -> class_expr
     val apply: ?loc:loc -> ?attrs:attrs -> class_expr ->
-      (arg_label * expression) list -> class_expr
+      (Parsetree.apply_flag * expression) list -> class_expr
     val let_: ?loc:loc -> ?attrs:attrs -> rec_flag -> value_binding list ->
       class_expr -> class_expr
     val constraint_: ?loc:loc -> ?attrs:attrs -> class_expr -> class_type ->

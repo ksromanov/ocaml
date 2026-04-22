@@ -165,7 +165,7 @@ and 'k case =
 
 and function_param =
   {
-    fp_arg_label: arg_label;
+    fp_arg_label: Types.arrow_flag;
     fp_param: Ident.t;
     fp_partial: partial;
     fp_kind: function_param_kind;
@@ -223,7 +223,7 @@ and class_expr_desc =
     Tcl_ident of Path.t * Longident.t loc * core_type list
   | Tcl_structure of class_structure
   | Tcl_fun of
-      arg_label * pattern * (Ident.t * expression) list
+      Types.arrow_flag * pattern * (Ident.t * expression) list
       * class_expr * partial
   | Tcl_apply of class_expr * (arg_label * apply_arg) list
   | Tcl_let of rec_flag * value_binding list *
@@ -280,6 +280,7 @@ and module_type_constraint =
 and functor_parameter =
   | Unit
   | Named of Ident.t option * string option loc * module_type
+  | Implicit of Ident.t option * string option loc * module_type
 
 and module_expr_desc =
     Tmod_ident of Path.t * Longident.t loc
@@ -328,6 +329,7 @@ and module_binding =
      mb_expr: module_expr;
      mb_attributes: attribute list;
      mb_loc: Location.t;
+     mb_implicit: Asttypes.implicit_flag;
     }
 
 and value_binding =
@@ -410,6 +412,7 @@ and module_declaration =
      md_type: module_type;
      md_attributes: attribute list;
      md_loc: Location.t;
+     md_implicit: Asttypes.implicit_flag;
     }
 
 and module_substitution =

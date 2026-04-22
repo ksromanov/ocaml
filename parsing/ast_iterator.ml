@@ -108,7 +108,7 @@ let rec iter_lid sub lid =
   | Ldot (lid, id) ->
     iter_loc_lid sub lid;
     iter_loc iter_string sub id
-  | Lapply (lid, lid') ->
+  | Lapply (lid, lid', _) ->
     iter_loc_lid sub lid;
     iter_loc_lid sub lid'
 
@@ -280,7 +280,7 @@ end
 
 let iter_functor_param sub = function
   | Unit -> ()
-  | Named (name, mty) ->
+  | Named (name, mty) | Implicit (name, mty) ->
     iter_loc iter_string_opt sub name;
     sub.module_type sub mty
 
@@ -356,11 +356,10 @@ module M = struct
     | Pmod_functor (param, body) ->
         iter_functor_param sub param;
         sub.module_expr sub body
-    | Pmod_apply (m1, m2) ->
-        sub.module_expr sub m1;
-        sub.module_expr sub m2
-    | Pmod_apply_unit m1 ->
+    | Pmod_apply (m1, Pmarg_generative) ->
         sub.module_expr sub m1
+    | Pmod_apply (m1, Pmarg_applicative m2) | Pmod_apply (m1, Pmarg_implicit m2) ->
+        sub.module_expr sub m1; sub.module_expr sub m2
     | Pmod_constraint (m, mty) ->
         sub.module_expr sub m; sub.module_type sub mty
     | Pmod_unpack e -> sub.expr sub e
@@ -399,6 +398,7 @@ module E = struct
     | Pparam_val (_lab, def, p) ->
         iter_opt (sub.expr sub) def;
         sub.pat sub p
+    | Pparam_implicit (_name, _pkg) -> ()
     | Pparam_newtype ty ->
         iter_loc iter_string sub ty
 
@@ -654,7 +654,7 @@ let default_iterator =
     binding_op = E.iter_binding_op;
 
     module_declaration =
-      (fun this {pmd_name; pmd_type; pmd_attributes; pmd_loc} ->
+      (fun this {pmd_name; pmd_type; pmd_implicit = _; pmd_attributes; pmd_loc} ->
          iter_loc iter_string_opt this pmd_name;
          this.module_type this pmd_type;
          this.location this pmd_loc;
@@ -678,7 +678,7 @@ let default_iterator =
       );
 
     module_binding =
-      (fun this {pmb_name; pmb_expr; pmb_attributes; pmb_loc} ->
+      (fun this {pmb_name; pmb_expr; pmb_implicit = _; pmb_attributes; pmb_loc} ->
          iter_loc iter_string_opt this pmb_name;
          this.module_expr this pmb_expr;
          this.location this pmb_loc;
@@ -686,14 +686,14 @@ let default_iterator =
       );
 
     open_declaration =
-      (fun this {popen_expr; popen_override = _; popen_attributes; popen_loc} ->
+      (fun this {popen_expr; popen_flag = _; popen_attributes; popen_loc} ->
          this.module_expr this popen_expr;
          this.location this popen_loc;
          this.attributes this popen_attributes
       );
 
     open_description =
-      (fun this {popen_expr; popen_override = _; popen_attributes; popen_loc} ->
+      (fun this {popen_expr; popen_flag = _; popen_attributes; popen_loc} ->
          iter_loc_lid this popen_expr;
          this.location this popen_loc;
          this.attributes this popen_attributes

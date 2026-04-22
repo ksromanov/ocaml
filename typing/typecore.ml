@@ -140,7 +140,7 @@ type error =
       previous_arg_loc : Location.t;
       extra_arg_loc : Location.t;
     }
-  | Apply_wrong_label of arg_label * type_expr * bool
+  | Apply_wrong_label of apply_flag * type_expr * bool
   | Label_multiply_defined of string
   | Label_missing of Ident.t list
   | Label_not_mutable of Longident.t
@@ -165,8 +165,8 @@ type error =
   | Not_a_function of type_expr * type_forcing_context option
   | Too_many_arguments of type_expr * type_forcing_context option
   | Abstract_wrong_label of
-      { got           : arg_label
-      ; expected      : arg_label
+      { got           : arrow_flag
+      ; expected      : arrow_flag
       ; expected_type : type_expr
       ; explanation   : type_forcing_context option
       }
@@ -179,6 +179,10 @@ type error =
   | Unexpected_existential of existential_restriction * string
   | Invalid_interval
   | Invalid_for_loop_index
+  | Apply_unexpected_implicit of type_expr
+  | No_instance_found of Typeimplicit.pending_implicit
+  | Ambiguous_implicit of Typeimplicit.pending_implicit * Path.t * Path.t
+  | Termination_fail of Typeimplicit.pending_implicit
   | No_value_clauses
   | Exception_pattern_disallowed
   | Mixed_value_and_exception_patterns_under_guard
@@ -243,6 +247,11 @@ let type_module =
 let type_str_item =
   ref ((fun _env _sstr -> assert false) :
          Env.t -> Parsetree.structure_item -> Typedtree.structure_item * Env.t)
+
+(* Forward declaration for type_expect, filled in later *)
+let type_expect_ref =
+  ref ((fun _env _sexp _ty -> assert false) :
+       Env.t -> Parsetree.expression -> type_expected -> Typedtree.expression)
 
 (* Forward declaration, to be filled in by Typemod.type_open *)
 
@@ -2335,7 +2344,7 @@ let add_module_variables env module_variables =
       let md =
         { md_type = modl.mod_type; md_attributes = [];
           md_loc = mv_name.loc;
-          md_uid = mv_uid; }
+          md_uid = mv_uid; md_implicit = Asttypes.Nonimplicit; }
       in
       Env.add_module_declaration ~shape:md_shape ~check:true mv_id pres md env
     end
@@ -2908,7 +2917,7 @@ let remaining_function_type_for_error ty_ret rev_args =
         | Omitted { ty_arg; level } ->
             let ty_ret =
               newty2 ~level
-                (Tarrow (lbl, ty_arg, ty_ret, commu_ok))
+                (Tarrow (Tarr_arg lbl, ty_arg, ty_ret, commu_ok))
             in
             ty_ret)
     ty_ret rev_args
@@ -2999,7 +3008,10 @@ let collect_arrow_arg ~may_warn ~funct ~optional ~sargs ~ty_arg ~ty_arg0 ~lv
           (not_principal "using an optional argument here");
       Arg (Known_arg { sarg; ty_arg; ty_arg0; wrapped_in_some })
   | None ->
-      if optional && List.mem_assoc Nolabel sargs then begin
+      if optional &&
+         List.exists (function (Parsetree.Papp_arg Nolabel, _) -> true
+                             | _ -> false) sargs
+      then begin
         may_warn funct.exp_loc (Warnings.Non_principal_labels
                                     "eliminated optional argument");
         Arg (Eliminated_optional_arg { ty_arg; level = lv })
@@ -3055,22 +3067,29 @@ let collect_functor_module_arg ~env ~sarg ~rev_args ~funct ~me ~optyp
       raise (Error(loc, env, Cannot_unify_tfunctor_to_tarrow trace))
 
 let collect_unknown_apply_args env funct ty_fun0 rev_args sargs =
-  let labels_match ~param ~arg =
-    param = arg
-    || !Clflags.classic && arg = Nolabel && not (is_optional param)
+  (* Check if arrow flag [param] matches apply flag [arg] (Parsetree level) *)
+  let arrows_match ~param ~(arg : Parsetree.apply_flag) =
+    let targ = tapp_of_papp arg in
+    arrow_is_applicable param targ
+    || !Clflags.classic && arg = Papp_arg Nolabel
+       && not (arrow_is_optional param)
   in
-  let has_label l ty_fun =
+  let has_label (app : Parsetree.apply_flag) ty_fun =
     let ls, ~is_ret_tvar = arrow_labels env ty_fun in
-    is_ret_tvar || List.mem l ls
+    is_ret_tvar || List.mem (tarr_of_tapp (tapp_of_papp app)) ls
   in
   let rec loop ty_fun rev_args sargs =
     match sargs with
     | [] -> ty_fun, List.rev rev_args
-    | (lbl, sarg) :: rest ->
+    | (app, sarg) :: rest ->
         let ty_fun = expand_head env ty_fun in
         let (arg_kind, ty_res) =
           match get_desc ty_fun with
           | Tvar _ ->
+              if app = Papp_implicit then
+                raise (Error (sarg.pexp_loc, env,
+                    Apply_unexpected_implicit
+                      (expand_head env funct.exp_type)));
               let ty_arg = newvar () in
               let ty_param = newmono ty_arg in
               let ty_res = newvar () in
@@ -3079,25 +3098,29 @@ let collect_unknown_apply_args env funct ty_fun0 rev_args sargs =
               then
                 Location.prerr_warning sarg.pexp_loc
                   Warnings.Ignored_extra_argument;
+              let arr = tarr_of_tapp (tapp_of_papp app) in
               unify env ty_fun
-                (newty (Tarrow(lbl,ty_param,ty_res,commu_var ())));
+                (newty (Tarrow(arr,ty_param,ty_res,commu_var ())));
               (`Arrow ty_arg, ty_res)
           | Tarrow (l, ty_param, ty_res, _)
-              when labels_match ~param:l ~arg:lbl ->
+              when arrows_match ~param:l ~arg:app ->
               (`Arrow (tpoly_get_mono ty_param), ty_res)
           | Tfunctor (l, id, pack, ty_res)
-            when labels_match ~param:l ~arg:lbl ->
+            when arrows_match ~param:(Tarr_arg l) ~arg:app ->
               (`Functor (l, id, pack), ty_res)
           | td ->
               let ty_fun =
                 match td with Tarrow _ | Tfunctor _ -> newty td | _ -> ty_fun
               in
               let ty_res = remaining_function_type_for_error ty_fun rev_args in
+              if app = Papp_implicit then
+                raise (Error(sarg.pexp_loc, env,
+                    Apply_wrong_label (Tapp_implicit, ty_res, false)));
               match get_desc ty_res with
               | Tarrow _ | Tfunctor _ ->
-                  if !Clflags.classic || not (has_label lbl ty_fun) then
+                  if !Clflags.classic || not (has_label app ty_fun) then
                     raise (Error(sarg.pexp_loc, env,
-                                Apply_wrong_label(lbl, ty_res, false)))
+                                Apply_wrong_label(tapp_of_papp app, ty_res, false)))
                   else
                     raise (Error(funct.exp_loc, env, Incoherent_label_order))
               | _ ->
@@ -3108,6 +3131,7 @@ let collect_unknown_apply_args env funct ty_fun0 rev_args sargs =
                     previous_arg_loc = previous_arg_loc rev_args ~funct;
                     extra_arg_loc = sarg.pexp_loc; }))
         in
+        let out_lbl = match app with Papp_arg l -> l | Papp_implicit -> Nolabel in
         let arg, ty_res = match arg_kind with
           | `Arrow ty_arg -> Unknown_arg { sarg; ty_arg }, ty_res
           | `Functor (l, id_us, pack) ->
@@ -3145,15 +3169,34 @@ let collect_unknown_apply_args env funct ty_fun0 rev_args sargs =
                   dependent_app_error env failure ~rev_args ~funct
                     ~sarg pack pack
         in
-        loop ty_res ((lbl, Arg arg) :: rev_args) rest
+        loop ty_res ((out_lbl, Arg arg) :: rev_args) rest
   in
   loop ty_fun0 rev_args sargs
 
+(* Extract an argument with the given label name from
+   a (Parsetree.apply_flag * expression) sargs list *)
+let rec extract_apply_label_aux hd name = function
+  | [] -> None
+  | (app, _ as p) :: rest ->
+      let n = match app with
+        | Parsetree.Papp_arg l -> label_name l
+        | Parsetree.Papp_implicit -> ""
+      in
+      if n = name then
+        Some (app, snd p, hd <> [], List.rev_append hd rest)
+      else
+        extract_apply_label_aux (p :: hd) name rest
+
+let extract_apply_label name ls = extract_apply_label_aux [] name ls
+
 let collect_apply_args env funct ignore_labels ty_fun ty_fun0 sargs =
   let warned = ref false in
+  let pending_implicits = ref [] in
   let rec loop visited ty_fun ty_fun0 rev_args sargs =
-    if sargs = [] then
+    if sargs = [] then begin
+      Typeimplicit.add_pending_implicits !pending_implicits;
       collect_unknown_apply_args env funct ty_fun0 rev_args sargs
+    end
     else
     let ty_fun' = expand_head env ty_fun in
     let lv = get_level ty_fun' in
@@ -3164,6 +3207,11 @@ let collect_apply_args env funct ignore_labels ty_fun ty_fun0 sargs =
         Location.prerr_warning loc w
       end
     in
+    (* [label_name_of_app]: extract label name from an apply_flag in sargs *)
+    let label_name_of_app = function
+      | Papp_arg l -> label_name l
+      | Papp_implicit -> ""
+    in
     let lopt =
       match get_desc ty_fun', get_desc (expand_head env ty_fun0) with
       | Tarrow (l, ty_arg, ty_ret, com), Tarrow (_, ty_arg0, ty_ret0, _)
@@ -3172,30 +3220,76 @@ let collect_apply_args env funct ignore_labels ty_fun ty_fun0 sargs =
       | Tfunctor (l, id, pack, ty), Tfunctor (_, id0, pack0, ty0) ->
           let tfun = { id_us = id; pack; ty} in
           let tfun0 = { id_us = id0; pack = pack0; ty = ty0} in
-          Some (l, `Functor (tfun, tfun0))
+          Some (Tarr_arg l, `Functor (tfun, tfun0))
       | _ -> None
     in
     match lopt with
     | None ->
       (* We're not looking at a *known* function type anymore. *)
+      Typeimplicit.add_pending_implicits !pending_implicits;
       collect_unknown_apply_args env funct ty_fun0 rev_args sargs
     | Some (l, arrow_kind) ->
       begin
-        let name = label_name l
-        and optional = is_optional l in
+        match l with
+        | Tarr_implicit id ->
+          (* Implicit arrow: instantiate implicit constraint tracking,
+             then skip this arrow (don't consume sargs).
+             Guard against infinite loops with recursive types (#rectypes). *)
+          if TypeSet.mem ty_fun' visited then begin
+            Typeimplicit.add_pending_implicits !pending_implicits;
+            collect_unknown_apply_args env funct ty_fun0 rev_args sargs
+          end else
+          let visited = TypeSet.add ty_fun' visited in
+          begin match arrow_kind with
+          | `Arrow (ty_arg, ty_ret, _, ty_ret0) ->
+            let inst = Typeimplicit.instantiate_one_implicit
+                         funct.exp_loc env id ty_arg [ty_fun;ty_fun0] in
+            pending_implicits := inst :: !pending_implicits;
+            (* Check if user passed an explicit implicit argument *)
+            let remaining_sargs, explicit_arg =
+              match sargs with
+              | (Papp_implicit, sarg) :: rest -> rest, Some sarg
+              | _ -> sargs, None
+            in
+            begin match explicit_arg with
+            | None ->
+              (* No explicit arg: implicit will be resolved later.
+                 Add Omitted placeholder. *)
+              let arg = Omitted { ty_arg; level = lv } in
+              loop visited ty_ret ty_ret0
+                ((Nolabel, arg) :: rev_args) remaining_sargs
+            | Some sarg ->
+              (* Explicit implicit arg: type-check and link to the implicit *)
+              let targ = !type_expect_ref env sarg (mk_expected ty_arg) in
+              (try
+                Typeimplicit.Link.to_expr inst targ
+              with Unify trace ->
+                raise(Error(sarg.pexp_loc, env,
+                            Expr_type_clash(trace, None, None))));
+              let arg = Arg (Typed_arg { targ }) in
+              loop visited ty_ret ty_ret0
+                ((Nolabel, arg) :: rev_args) remaining_sargs
+            end
+          | `Functor _ -> assert false (* implicit functor not supported *)
+          end
+        | Tarr_arg arg_lbl ->
+        let name = label_name arg_lbl
+        and optional = is_optional arg_lbl in
         let remaining_sargs, arg_opt, visited, terminate =
           if ignore_labels then begin
             (* No reordering is allowed, process arguments in order *)
             match sargs with
             | [] -> assert false
-            | (l', sarg) :: remaining_sargs ->
-                if name = label_name l' || (not optional && l' = Nolabel) then
-                  (remaining_sargs, Some (sarg, l'), TypeSet.empty, false)
+            | (app', sarg) :: remaining_sargs ->
+                let app_name = label_name_of_app app' in
+                let app_nolabel = app' = Papp_arg Nolabel in
+                if name = app_name || (not optional && app_nolabel) then
+                  (remaining_sargs, Some (sarg, app'), TypeSet.empty, false)
                 else if
                   optional &&
-                  not (List.exists (fun (l, _) -> name = label_name l)
+                  not (List.exists (fun (a, _) -> name = label_name_of_app a)
                         remaining_sargs) &&
-                  List.exists (function (Nolabel, _) -> true | _ -> false)
+                  List.exists (function (Papp_arg Nolabel, _) -> true | _ -> false)
                     sargs
                 then begin
                   if TypeSet.mem ty_fun visited then
@@ -3205,20 +3299,22 @@ let collect_apply_args env funct ignore_labels ty_fun ty_fun0 sargs =
                     (sargs, None, visited, false)
                 end else
                   raise(Error(sarg.pexp_loc, env,
-                              Apply_wrong_label(l', ty_fun', optional)))
+                              Apply_wrong_label(tapp_of_papp app', ty_fun', optional)))
           end else
             (* Arguments can be commuted, try to fetch the argument
               corresponding to the first parameter. *)
-            match extract_label name sargs with
-            | Some (l', sarg, commuted, remaining_sargs) ->
+            match extract_apply_label name sargs with
+            | Some (app', sarg, commuted, remaining_sargs) ->
                 if commuted then begin
                   may_warn sarg.pexp_loc
                     (not_principal "commuting this argument")
                 end;
-                if not optional && is_optional l' then
+                let app_is_optional = match app' with
+                  | Papp_arg (Optional _) -> true | _ -> false in
+                if not optional && app_is_optional then
                   Location.prerr_warning sarg.pexp_loc
-                    (Warnings.Nonoptional_label (Asttypes.string_of_label l));
-                remaining_sargs, Some (sarg, l'), TypeSet.empty, false
+                    (Warnings.Nonoptional_label (Asttypes.string_of_label arg_lbl));
+                remaining_sargs, Some (sarg, app'), TypeSet.empty, false
             | None ->
                 if TypeSet.mem ty_fun visited then
                   sargs, None, visited, true
@@ -3229,12 +3325,16 @@ let collect_apply_args env funct ignore_labels ty_fun ty_fun0 sargs =
         if terminate then
           collect_unknown_apply_args env funct ty_fun0 rev_args remaining_sargs
         else
+        (* arg_opt_for_arrow: adapt apply_flag arg_opt to Optional boolean context *)
+        let arg_opt_for_arrow = Option.map (fun (sarg, app) ->
+          (sarg, match app with Papp_arg l -> l | Papp_implicit -> Nolabel)
+        ) arg_opt in
         match arrow_kind with
         | `Arrow (ty_arg, ty_ret, ty_arg0, ty_ret0) ->
             let arg = collect_arrow_arg ~may_warn ~funct ~optional ~sargs
-                                        ~ty_arg ~ty_arg0 ~lv arg_opt
+                                        ~ty_arg ~ty_arg0 ~lv arg_opt_for_arrow
             in
-            loop visited ty_ret ty_ret0 ((l, arg) :: rev_args) remaining_sargs
+            loop visited ty_ret ty_ret0 ((arg_lbl, arg) :: rev_args) remaining_sargs
         | `Functor (tfun, tfun0) ->
           may_warn funct.exp_loc
               (not_principal "applying a dependent function");
@@ -3245,22 +3345,23 @@ let collect_apply_args env funct ignore_labels ty_fun ty_fun0 sargs =
             match me_opt with
             | Some (Some (me, optyp), sarg) ->
               collect_functor_module_arg ~env ~sarg ~rev_args ~funct ~me
-                                         ~optyp ~tfun ~tfun0 ~l
+                                         ~optyp ~tfun ~tfun0 ~l:arg_lbl
             | Some _ | None ->
               match
-                filter_arrow env ~in_apply:true ty_fun' l ~param_hole:false,
-                filter_arrow env ~in_apply:true ty_fun0 l ~param_hole:false
+                filter_arrow env ~in_apply:true ty_fun' arg_lbl ~param_hole:false,
+                filter_arrow env ~in_apply:true ty_fun0 arg_lbl ~param_hole:false
               with
               | Ok {ty_param = ty_arg; ty_ret},
                   Ok {ty_param = ty_arg0; ty_ret = ty_ret0} ->
                 let arg = collect_arrow_arg ~may_warn ~funct ~optional ~sargs
-                                            ~ty_arg ~ty_arg0 ~lv arg_opt in
+                                            ~ty_arg ~ty_arg0 ~lv
+                                            arg_opt_for_arrow in
                 (arg, ty_ret, ty_ret0)
               | Error err, _ | _, Error err ->
                 dependent_labeled_app_error env err ~rev_args ~funct
                     me_opt ty_fun' tfun.id_us tfun.pack tfun0.pack
           in
-          loop visited ty_ret ty_ret0 ((l, arg) :: rev_args) remaining_sargs
+          loop visited ty_ret ty_ret0 ((arg_lbl, arg) :: rev_args) remaining_sargs
       end
   in
   loop TypeSet.empty ty_fun ty_fun0 [] sargs
@@ -3276,7 +3377,7 @@ let type_omitted_parameters_and_build_result_type ty_ret args =
          | Omitted { ty_arg; level } ->
              let ty_ret =
                newty2 ~level
-                 (Tarrow ((lbl, ty_arg, ty_ret, commu_ok)))
+                 (Tarrow ((Tarr_arg lbl, ty_arg, ty_ret, commu_ok)))
              in
              let args = (lbl, Omitted ()) :: args in
              (ty_ret, args))
@@ -3467,7 +3568,9 @@ let loc_rest_of_function
 
 let rec approx_type env sty =
   match sty.ptyp_desc with
-  | Ptyp_arrow (p, ({ ptyp_desc = Ptyp_poly _ } as arg_sty), sty) ->
+  | Ptyp_arrow (Parr_implicit _, _, _) ->
+      newvar ()
+  | Ptyp_arrow (Parr_arg p, ({ ptyp_desc = Ptyp_poly _ } as arg_sty), sty) ->
     if is_optional p then newvar ()
     else begin
       let arg_ty =
@@ -3476,11 +3579,11 @@ let rec approx_type env sty =
          unlike in the monomorphic case *)
         Typetexp.transl_simple_type env ~closed:false arg_sty
       in
-      newty (Tarrow (p, arg_ty.ctyp_type, approx_type env sty, commu_ok))
+      newty (Tarrow (Tarr_arg p, arg_ty.ctyp_type, approx_type env sty, commu_ok))
     end
-  | Ptyp_arrow (p, _, sty) ->
+  | Ptyp_arrow (Parr_arg p, _, sty) ->
       let ty1 = if is_optional p then type_option (newvar ()) else newvar () in
-      newty (Tarrow (p, newmono ty1, approx_type env sty, commu_ok))
+      newty (Tarrow (Tarr_arg p, newmono ty1, approx_type env sty, commu_ok))
   | Ptyp_tuple args ->
       newty (Ttuple (List.map (fun (l, t) -> l, approx_type env t) args))
   | Ptyp_constr (lid, ctl) ->
@@ -3642,6 +3745,7 @@ and type_approx_function env params c body ty_expected ~in_function ~first =
           ~first ~in_function
       in
       type_approx_function env params c body ty_res ~in_function ~first:false
+  | { pparam_desc = Pparam_implicit (_, _) } :: _ -> ()
   | { pparam_desc = Pparam_newtype _ } :: _ -> ()
   | [] ->
       (* In the [Pconstraint] case, we override the [ty_expected] that
@@ -3667,6 +3771,7 @@ and type_approx_function env params c body ty_expected ~in_function ~first =
 (* Check that all univars are safe in a type. Both exp.exp_type and
    ty_expected should already be generalized. *)
 let check_univars env kind exp ty_expected vars =
+  Typeimplicit.generalize_implicits ();
   let pty = instance ty_expected in
   let exp_ty, vars =
     with_local_level_generalize begin fun () ->
@@ -4007,10 +4112,10 @@ type apply_prim =
   | Revapply
 let check_apply_prim_type prim typ =
   match get_desc typ with
-  | Tarrow (Nolabel,a,b,_) when tpoly_is_mono a ->
+  | Tarrow (Tarr_arg Nolabel,a,b,_) when tpoly_is_mono a ->
       let a = tpoly_get_mono a in
       begin match get_desc b with
-      | Tarrow(Nolabel,c,d,_) when tpoly_is_mono c ->
+      | Tarrow(Tarr_arg Nolabel,c,d,_) when tpoly_is_mono c ->
           let c = tpoly_get_mono c in
           let f, x, res =
             match prim with
@@ -4018,7 +4123,7 @@ let check_apply_prim_type prim typ =
             | Revapply -> c, a, d
           in
           begin match get_desc f with
-          | Tarrow(Nolabel,fl,fr,_) when tpoly_is_mono fl  ->
+          | Tarrow(Tarr_arg Nolabel,fl,fr,_) when tpoly_is_mono fl  ->
               let fl = tpoly_get_mono fl in
               is_Tvar fl && is_Tvar fr && is_Tvar x && is_Tvar res
               && Types.eq_type fl x && Types.eq_type fr res
@@ -4073,6 +4178,10 @@ let lower_args outer_level env ty_fun =
   let rec lower_args env seen ty_fun =
     let ty = expand_head env ty_fun in
     if TypeSet.mem ty seen then () else
+      let env = match get_desc ty with
+        | Tarrow (Tarr_implicit id, _, _, _) ->
+          Env.set_implicit_level id 0 env
+        | _ -> env in
       match get_desc ty with
         Tarrow (_l, ty_arg, ty_fun, _com) ->
           lower env ty_arg;
@@ -4099,7 +4208,11 @@ let enforce_syntactic_arity ~loc env exp_type result_params body =
      resulting type.
   *)
   (* Assert that [ty] is a function, and return its return type. *)
-  let filter_ty_ret_exn arg_label (env,ty) =
+  let filter_ty_ret_exn arrow_flag (env,ty) =
+    let arg_label = match arrow_flag with
+      | Types.Tarr_arg l -> l
+      | Tarr_implicit _ -> Nolabel
+    in
     match filter_arity env ty arg_label with
     | Ok (env,ty_ret) -> env, ty_ret
     | Error error ->
@@ -4110,7 +4223,7 @@ let enforce_syntactic_arity ~loc env exp_type result_params body =
               let tarrow =
                 (newty
                    (Tarrow
-                      (arg_label,
+                      (arrow_flag,
                        newmono (newvar ()),
                        newvar (),
                        commu_ok)));
@@ -4154,7 +4267,7 @@ let enforce_syntactic_arity ~loc env exp_type result_params body =
   | Tfunction_body _ -> ()
   | Tfunction_cases _ ->
       ignore
-        (filter_ty_ret_exn Nolabel env_ret_ty : Env.t * type_expr)
+        (filter_ty_ret_exn (Tarr_arg Nolabel) env_ret_ty : Env.t * type_expr)
 
 
 (* Generalize expressions *)
@@ -4242,6 +4355,21 @@ let check_let_univars env pat_list exp_list =
       Option.iter (check_univars env "definition" exp expected_ty) vars)
     pat_list
     exp_list
+
+(* Filter an implicit arrow type *)
+let filter_implicit env ty =
+  let ty = expand_head env ty in
+  match get_desc ty with
+  | Tarrow (Tarr_implicit id, ty_arg, ty_res, _) ->
+      Some (id, ty_arg, ty_res)
+  | Tvar _ ->
+      None
+  | _ ->
+      let diff = Errortrace.Diff
+          { got = Errortrace.trivial_expansion ty;
+            expected = Errortrace.trivial_expansion ty }
+      in
+      raise (Unify (Errortrace.unification_error ~trace:[diff]))
 
 let rec type_exp ?recarg env sexp =
   (* We now delegate everything to type_expect *)
@@ -4455,6 +4583,13 @@ and type_expect_
           with_local_level_generalize_structure_if_principal
             (fun () -> type_exp env sfunct)
         in
+        let funct =
+          if Typeimplicit.has_implicit funct.exp_type then
+            {funct with exp_type =
+               Subst.type_expr Subst.identity funct.exp_type}
+          else
+            funct
+        in
         lower_args outer_level env funct.exp_type;
         funct
       in
@@ -4463,15 +4598,15 @@ and type_expect_
         match funct.exp_desc, sargs with
         | Texp_ident (_, _,
                       {val_kind = Val_prim {prim_name="%revapply"}; val_type}),
-          [Nolabel, sarg; Nolabel, actual_sfunct]
+          [Papp_arg Nolabel, sarg; Papp_arg Nolabel, actual_sfunct]
           when is_inferred actual_sfunct
             && check_apply_prim_type Revapply val_type ->
-            type_sfunct actual_sfunct, [Nolabel, sarg]
+            type_sfunct actual_sfunct, [Papp_arg Nolabel, sarg]
         | Texp_ident (_, _,
                       {val_kind = Val_prim {prim_name="%apply"}; val_type}),
-          [Nolabel, actual_sfunct; Nolabel, sarg]
+          [Papp_arg Nolabel, actual_sfunct; Papp_arg Nolabel, sarg]
           when check_apply_prim_type Apply val_type ->
-            type_sfunct actual_sfunct, [Nolabel, sarg]
+            type_sfunct actual_sfunct, [Papp_arg Nolabel, sarg]
         | _ ->
             funct, sargs
       in
@@ -4486,7 +4621,9 @@ and type_expect_
   | Pexp_match(sarg, caselist) ->
       let arg =
         with_local_level_generalize (fun () -> type_exp env sarg)
-          ~before_generalize:(may_lower_contravariant env)
+          ~before_generalize:(fun e ->
+            Typeimplicit.generalize_implicits ();
+            may_lower_contravariant env e)
       in
       let rec split_cases valc effc conts = function
         | [] -> List.rev valc, List.rev effc, List.rev conts
@@ -5180,15 +5317,15 @@ and type_expect_
           let spat_params, ty_params = loop slet.pbop_pat (newvar ()) sands in
           let ty_func_result = newvar () in
           let ty_func =
-            newty (Tarrow(Nolabel, newmono ty_params, ty_func_result, commu_ok))
+            newty (Tarrow(Tarr_arg Nolabel, newmono ty_params, ty_func_result, commu_ok))
           in
           let ty_result = newvar () in
           let ty_andops = newvar () in
           let ty_op =
             let ty_fun =
-              newty (Tarrow(Nolabel, newmono ty_func, ty_result, commu_ok))
+              newty (Tarrow(Tarr_arg Nolabel, newmono ty_func, ty_result, commu_ok))
             in
-            newty (Tarrow(Nolabel, newmono ty_andops, ty_fun, commu_ok))
+            newty (Tarrow(Tarr_arg Nolabel, newmono ty_andops, ty_fun, commu_ok))
           in
           begin try
             unify env op_type ty_op
@@ -5612,6 +5749,13 @@ and type_function
     loc_rest_of_function ~loc_function ~first params_suffix body
   in
   match params_suffix with
+  | { pparam_desc = Pparam_implicit (name, pkg); pparam_loc } :: rest ->
+      (* Implicit parameter: {name : S} -> ... *)
+      let (exp_type, params, body_typed, newtypes, contains_gadt) =
+        type_implicit_function_param ~pparam_loc ~name ~pkg ~first
+          env rest body_constraint body ty_expected ~in_function
+      in
+      exp_type, params, body_typed, newtypes, contains_gadt
   | { pparam_desc = Pparam_newtype newtype; pparam_loc = _ } :: rest ->
       (* Check everything else in the scope of (type a). *)
       let (params, body, newtypes, contains_gadt), exp_type =
@@ -5703,7 +5847,7 @@ and type_function
            | ([] | _ :: _ :: _), _ -> assert false
       in
       let exp_type =
-        instance (newgenty (Tarrow (arg_label, ty_param, ty_ret, commu_ok)))
+        instance (newgenty (Tarrow (Tarr_arg arg_label, ty_param, ty_ret, commu_ok)))
       in
       (* This is quadratic, as it operates over the entire tail of the
          type for each new parameter. Now that functions are n-ary, we
@@ -5720,7 +5864,7 @@ and type_function
            only call this when necessary. *)
         let label_tys, ret_ty_or_cycle = arrow_spine env ty in
         let is_spine_only_labels =
-          List.for_all (fun (label, _arg_ty) -> label <> Nolabel) label_tys
+          List.for_all (fun (label, _arg_ty) -> label <> Tarr_arg Nolabel) label_tys
         in
         if is_spine_only_labels
         then (
@@ -5773,7 +5917,7 @@ and type_function
         { has_poly;
           param =
             { fp_kind;
-              fp_arg_label = arg_label;
+              fp_arg_label = Tarr_arg arg_label;
               fp_param;
               fp_partial = partial;
               fp_newtypes = newtypes;
@@ -5894,6 +6038,7 @@ and type_moddep_fun ~env ~name ~pack_param ~rest ~arg_label ~first
     md_attributes = [];
     md_loc = pparam_loc;
     md_uid = pv_uid;
+    md_implicit = Asttypes.Nonimplicit;
   } in
   let (res_ty, params, body, newtypes, contains_gadt), s_ident =
     with_local_level begin fun () ->
@@ -5924,7 +6069,7 @@ and type_moddep_fun ~env ~name ~pack_param ~rest ~arg_label ~first
         Btype.newgenty (Tfunctor (arg_label, ident, pack, res_ty))
     | None ->
         let pck_ty = newgenmono (newgenty (Tpackage pack)) in
-        newgenty (Tarrow (arg_label, pck_ty, res_ty, commu_ok))
+        newgenty (Tarrow (Tarr_arg arg_label, pck_ty, res_ty, commu_ok))
   in
   let _ =
     try
@@ -5950,7 +6095,7 @@ and type_moddep_fun ~env ~name ~pack_param ~rest ~arg_label ~first
   let fp_kind = Tparam_pat pattern in
   let param =
     { fp_kind;
-      fp_arg_label = arg_label;
+      fp_arg_label = Tarr_arg arg_label;
       fp_param = s_ident;
       fp_partial = Total;
       fp_newtypes = newtypes;
@@ -6284,14 +6429,14 @@ and type_argument ?explanation ?recarg env sarg ty_expected' ty_expected =
   (* ty_expected' may be generic *)
   let no_labels ty =
     let ls, ~is_ret_tvar = arrow_labels env ty in
-    not is_ret_tvar && List.for_all ((=) Nolabel) ls
+    not is_ret_tvar && List.for_all arrow_is_simple ls
   in
   let may_coerce =
     if not (is_inferred sarg) then None else
     let work () =
       let te = expand_head env ty_expected' in
       match get_desc te with
-        Tarrow(Nolabel,_,ty_res0,_) ->
+        Tarrow(Tarr_arg Nolabel,_,ty_res0,_) ->
           Some (no_labels ty_res0, get_level te)
       | _ -> None
     in
@@ -6309,19 +6454,26 @@ and type_argument ?explanation ?recarg env sarg ty_expected' ty_expected =
         with_local_level_generalize_structure_if_principal
           (fun () -> type_exp env sarg)
       in
-      let rec make_args args ty_fun =
-        match get_desc (expand_head env ty_fun) with
-        | Tarrow (l,ty_arg,ty_fun,_) when is_optional l ->
-            let ty =
+      let label_of_arrow = function
+        | Tarr_arg l -> l
+        | Tarr_implicit _ -> Nolabel
+      in
+      let rec make_args visited args ty_fun =
+        let ty = expand_head env ty_fun in
+        if TypeSet.mem ty visited then List.rev args, ty_fun, false else
+        let visited = TypeSet.add ty visited in
+        match get_desc ty with
+        | Tarrow (l,ty_arg,ty_fun,_) when arrow_is_optional l ->
+            let ty_none =
               option_none env (instance (tpoly_get_mono ty_arg)) sarg.pexp_loc
             in
-            make_args ((l, Arg ty) :: args) ty_fun
-        | Tarrow (l,_,ty_res',_) when l = Nolabel || !Clflags.classic ->
+            make_args visited ((label_of_arrow l, Arg ty_none) :: args) ty_fun
+        | Tarrow (l,_,ty_res',_) when arrow_is_simple l || !Clflags.classic ->
             List.rev args, ty_fun, no_labels ty_res'
         | Tvar _ ->  List.rev args, ty_fun, false
         |  _ -> [], texp.exp_type, false
       in
-      let args, ty_fun', simple_res = make_args [] texp.exp_type
+      let args, ty_fun', simple_res = make_args TypeSet.empty [] texp.exp_type
       and texp = {texp with exp_type = instance texp.exp_type} in
       if not (simple_res || safe_expect) then begin
         unify_exp ~sexp:sarg env texp ty_expected;
@@ -6332,7 +6484,7 @@ and type_argument ?explanation ?recarg env sarg ty_expected' ty_expected =
       and ty_fun = instance ty_fun' in
       let ty_arg, ty_res =
         match get_desc (expand_head env ty_expected) with
-          Tarrow(Nolabel,ty_arg,ty_res,_) -> ty_arg, ty_res
+          Tarrow(Tarr_arg Nolabel,ty_arg,ty_res,_) -> ty_arg, ty_res
         | _ -> assert false
       in
       unify_exp ~sexp:sarg env {texp with exp_type = ty_fun} ty_expected;
@@ -6458,7 +6610,10 @@ and type_apply_arg env ~app_loc (lbl, arg) =
       (lbl, Arg arg)
   | Omitted _ as arg -> (lbl, arg)
 
-and type_application env app_loc funct sargs =
+and type_application env app_loc funct (sargs : (Parsetree.apply_flag * Parsetree.expression) list) =
+  (* Convert Parsetree.apply_flag to Btype/Typecore label for internal use.
+     This is done at the boundary so all internal functions use Parsetree.apply_flag
+     consistently (since they check Papp_arg/Papp_implicit). *)
   let exception Filter_arrow_mono_failed in
   let filter_arrow_mono env t l =
     match filter_arrow env ~in_apply:false t l ~param_hole:false with
@@ -6475,7 +6630,7 @@ and type_application env app_loc funct sargs =
   in
   match sargs with
   | (* Special case for ignore: avoid discarding warning *)
-    [Nolabel, sarg] when is_ignore funct ->
+    [Papp_arg Nolabel, sarg] when is_ignore funct ->
       let { ty_param; ty_ret } =
         with_local_level_generalize_structure_if_principal (fun () ->
           filter_arrow_mono env (instance funct.exp_type) Nolabel)
@@ -6490,15 +6645,15 @@ and type_application env app_loc funct sargs =
         begin
           let ls, ~is_ret_tvar = arrow_labels env ty in
           not is_ret_tvar &&
-          let labels = List.filter (fun l -> not (is_optional l)) ls in
+          let labels = List.filter (fun l -> not (arrow_is_optional l)) ls in
           List.length labels = List.length sargs &&
-          List.for_all (fun (l,_) -> l = Nolabel) sargs &&
-          List.exists (fun l -> l <> Nolabel) labels &&
+          List.for_all (function (Papp_arg Nolabel,_) -> true | _ -> false) sargs &&
+          List.exists (fun l -> l <> Tarr_arg Nolabel) labels &&
           (Location.prerr_warning
              funct.exp_loc
              (Warnings.Labels_omitted
-                (List.map Asttypes.string_of_label
-                          (List.filter ((<>) Nolabel) labels)));
+                (List.map label_name_of_arrow_raw
+                          (List.filter ((<>) (Tarr_arg Nolabel)) labels)));
            true)
         end
       in
@@ -6615,12 +6770,7 @@ and type_construct env ~sexp lid sarg ty_expected_explained =
     List.map2 (fun e (t,t0) -> type_argument ~recarg env e t t0) sargs
       (List.combine ty_args ty_args0) in
   if constr.cstr_private = Private then
-    begin match constr.cstr_tag with
-    | Cstr_extension _ ->
-        raise(Error(sexp.pexp_loc, env, Private_constructor (constr, ty_res)))
-    | Cstr_constant _ | Cstr_block _ | Cstr_unboxed ->
-        raise (Error(sexp.pexp_loc, env, Private_type ty_res));
-    end;
+    raise(Error(sexp.pexp_loc, env, Private_type ty_res));
   (* NOTE: shouldn't we call "re" on this final expression? -- AF *)
   { texp with
     exp_desc = Texp_construct(lid, constr, args) }
@@ -6988,7 +7138,7 @@ and type_function_cases_expect
         ~check_if_total:true loc cases
     in
     let ty_fun =
-      instance (newgenty (Tarrow (Nolabel, ty_param, ty_ret, commu_ok)))
+      instance (newgenty (Tarrow (Tarr_arg Nolabel, ty_param, ty_ret, commu_ok)))
     in
     unify_exp_types loc env ty_fun (instance ty_expected);
     cases, partial, ty_fun
@@ -7019,6 +7169,107 @@ and type_effect_cases
         in
           cases
         end
+
+and type_implicit_function_param ~pparam_loc ~name ~pkg ~first:_first
+    env rest body_constraint body ty_expected ~in_function =
+  let loc = pparam_loc in
+  let ty_fun, (loc_function : Location.t) = in_function in
+  (* Propagate expected types via filter_implicit *)
+  let expect =
+    try filter_implicit env (instance ty_expected)
+    with Unify _ ->
+      let ty = expand_head env ty_expected in
+      match get_desc ty with
+      | Tarrow (arr, _, _, _) ->
+          raise(Error(loc, env,
+                      Abstract_wrong_label
+                        { got = Tarr_arg (Labelled ("{"^name^"}"));
+                          expected = arr;
+                          expected_type = ty; explanation = None }))
+      | _ ->
+          raise(Error(loc_function, env,
+                      Too_many_arguments (ty_fun.ty, None)))
+  in
+  let (ty_arg, mty) =
+    match expect with
+    | Some(_, ty_arg, _) ->
+        (ty_arg, Ctype.modtype_of_tpackage env ty_arg)
+    | None ->
+        (* Use the package type annotation from the syntax to create a
+           Tpackage type for the implicit argument *)
+        let loc = pkg.ppt_loc in
+        let smty = Ast_helper.Mty.mk ~loc (Pmty_ident pkg.ppt_path) in
+        let tmty = !Typetexp.transl_modtype env smty in
+        let mty = tmty.mty_type in
+        (* Get the module type path for the package *)
+        let p = match pkg.ppt_path.txt with
+          | lid -> fst (Env.find_modtype_by_name lid env)
+        in
+        let pack = { pack_path = p; pack_constraints = [] } in
+        let ty_arg = newty (Tpackage pack) in
+        (ty_arg, mty)
+  in
+  (* Enter implicit module into scope *)
+  let (exp_type, params, body_typed, newtypes, contains_gadt, id) =
+    with_local_level begin fun () ->
+      let level = get_current_level () in
+      let (id, body_env) =
+        Typetexp.TyVarEnv.with_local_scope (fun () ->
+          let pres = match mty with
+            | Mty_alias _ -> Mp_absent
+            | _ -> Mp_present
+          in
+          let (id, body_env) =
+            Env.enter_module ~scope:Ident.lowest_scope ~implicit_:Implicit
+              name pres mty env
+          in
+          let body_env = Env.set_implicit_level id level body_env in
+          (id, body_env))
+      in
+      (* Type the rest of the function in the extended env *)
+      let rest_ty = match expect with
+        | Some(id', _, ty_res) ->
+            let subst = Subst.add_module id' (Path.Pident id) Subst.identity in
+            Subst.type_expr subst ty_res
+        | None -> newvar ()
+      in
+      let (exp_type, params, body_typed, newtypes, contains_gadt) =
+        type_function body_env rest body_constraint body rest_ty
+          ~first:false ~in_function
+      in
+      (exp_type, params, body_typed, newtypes, contains_gadt, id)
+    end
+  in
+  Typeimplicit.generalize_implicits ();
+  (* Build a synthetic wildcard pattern for the implicit parameter *)
+  let spat = Ast_helper.Pat.any ~loc () in
+  let (c_lhs, _, pattern_forces, pvs, _mvs) =
+    type_pattern Value ~lev:(get_current_level ()) env spat ty_arg
+      Modules_ignored
+  in
+  List.iter (fun f -> f ()) pattern_forces;
+  let _pat_env =
+    add_pattern_variables env pvs
+      ~check:(fun s -> Warnings.Unused_var_strict s)
+      ~check_as:(fun s -> Warnings.Unused_var s)
+  in
+  let implicit_param =
+    {
+      fp_arg_label = Tarr_implicit id;
+      fp_param = id;
+      fp_partial = Total;
+      fp_kind = Tparam_pat c_lhs;
+      fp_newtypes = [];
+      fp_loc = loc;
+    }
+  in
+  let arrow_ty = Tarrow (Tarr_implicit id, ty_arg, exp_type, commu_ok) in
+  let result_ty = instance (newgenty arrow_ty) in
+  (* Unify with expected type so the implicit arrow is visible *)
+  (try unify env result_ty (instance ty_expected)
+   with Unify _ -> ());
+  let result_param = { param = implicit_param; has_poly = false } in
+  (result_ty, result_param :: params, body_typed, newtypes, contains_gadt)
 
 and value_bindings_of_pat_exp_lists pat_list exp_list ~spat_sexp_list =
   let l = List.combine pat_list exp_list in
@@ -7112,6 +7363,7 @@ and type_let_rec
       ~before_generalize:(fun (pat_list, exp_list, _) ->
         do_relaxed_value_restriction env pat_list exp_list)
   in
+  Typeimplicit.generalize_implicits ();
   check_let_univars env pat_list exp_list;
   value_bindings_of_pat_exp_lists pat_list exp_list ~spat_sexp_list, new_env
 
@@ -7212,6 +7464,7 @@ and type_let_nonrec
       ~before_generalize:(fun (pat_list, exp_list, _, _) ->
         do_relaxed_value_restriction env pat_list exp_list)
   in
+  Typeimplicit.generalize_implicits ();
   check_let_univars env pat_list exp_list;
   let l = value_bindings_of_pat_exp_lists pat_list exp_list ~spat_sexp_list in
   List.iter
@@ -7420,9 +7673,9 @@ and type_andops env sarg sands expected_ty =
             let ty_rest = newvar () in
             let ty_result = newvar() in
             let ty_rest_fun =
-              newty (Tarrow(Nolabel, newmono ty_arg, ty_result, commu_ok)) in
+              newty (Tarrow(Tarr_arg Nolabel, newmono ty_arg, ty_result, commu_ok)) in
             let ty_op =
-              newty (Tarrow(Nolabel, newmono ty_rest, ty_rest_fun, commu_ok)) in
+              newty (Tarrow(Tarr_arg Nolabel, newmono ty_rest, ty_rest_fun, commu_ok)) in
             begin try
               unify env op_type ty_op
             with Unify err ->
@@ -7574,7 +7827,9 @@ let type_expression env sexp =
       Typetexp.TyVarEnv.reset();
       type_exp env sexp
     end
-    ~before_generalize:(may_lower_contravariant env)
+    ~before_generalize:(fun e ->
+      Typeimplicit.generalize_implicits ();
+      may_lower_contravariant env e)
   in
   match sexp.pexp_desc with
     Pexp_ident lid ->
@@ -7924,12 +8179,17 @@ let report_error ~loc env =
             print_expanded func_ty
             "This is not a function; it cannot be applied."
       end
+  | Apply_wrong_label (Tapp_implicit, ty, _extra_info) ->
+      Location.errorf ~loc
+        "@[<v>@[<2>The function applied to this argument has type@ %a@]@.\
+         This implicit argument cannot be applied@]"
+        Printtyp.type_expr ty
   | Apply_wrong_label (l, ty, extra_info) ->
       let print_label ppf = function
-        | Nolabel -> fprintf ppf "without label"
-        | l ->
-            fprintf ppf "with label %a"
-              Style.inline_code (prefixed_label_name l)
+        | Tapp_arg Nolabel -> fprintf ppf "without label"
+        | Tapp_arg (Optional s) -> fprintf ppf "with label ?%s" s
+        | Tapp_arg (Labelled s) -> fprintf ppf "with label ~%s" s
+        | Tapp_implicit -> assert false
       in
       let extra_info =
         if not extra_info then
@@ -8088,15 +8348,18 @@ let report_error ~loc env =
         pp_doc (report_type_expected_explanation_opt explanation)
   | Abstract_wrong_label {got; expected; expected_type; explanation} ->
       let label ~long ppf = function
-        | Nolabel -> fprintf ppf "unlabeled"
-        | l       ->
+        | Tarr_arg Nolabel -> fprintf ppf "unlabeled"
+        | Tarr_arg l       ->
             if long then
               fprintf ppf "labeled %a" Style.inline_code (prefixed_label_name l)
             else
               Style.inline_code ppf (prefixed_label_name l)
+        | Tarr_implicit id ->
+            fprintf ppf "implicit %a"
+              Style.inline_code ("{" ^ Ident.name id ^ "}")
       in
       let second_long = match got, expected with
-        | Nolabel, _ | _, Nolabel -> true
+        | Tarr_arg Nolabel, _ | _, Tarr_arg Nolabel -> true
         | _                       -> false
       in
       Location.errorf ~loc
@@ -8339,6 +8602,28 @@ let report_error ~loc env =
             The module argument %a cannot be omitted in this application.@]"
             print_expanded func_ty
             Style.inline_code (Ident.Unscoped.name id_us)
+  | Apply_unexpected_implicit typ ->
+      begin match get_desc typ with
+        Tarrow _ ->
+          Location.errorf ~loc "@[<v>@[<2>This function has type@ %a@]@ \
+            It can't be applied to an implicit argument.@]" Printtyp.type_expr typ
+      | _ ->
+          Location.errorf ~loc "@[<v>@[<2>This expression has type@ %a@]@ %s@]"
+            Printtyp.type_expr typ
+            "This is not a function; it cannot be applied an implicit argument."
+      end
+  | No_instance_found inst ->
+      Location.errorf ~loc "No instance found for implicit %s."
+        (Ident.name inst.Typeimplicit.implicit_id)
+  | Ambiguous_implicit (inst, p1, p2) ->
+      Location.errorf ~loc
+        "Ambiguous implicit %s:@ %a@ and %a@ are both solutions."
+        (Ident.name inst.Typeimplicit.implicit_id)
+        Printtyp.path p1 Printtyp.path p2
+  | Termination_fail inst ->
+      Location.errorf ~loc
+        "Termination check failed when searching for implicit %s."
+        (Ident.name inst.Typeimplicit.implicit_id)
 
 let report_error ~loc env err =
   Printtyp.wrap_printing_env ~error:true env
@@ -8357,8 +8642,7 @@ let () =
 
 let () =
   Persistent_env.add_delayed_check_forward := add_delayed_check;
-  Env.add_delayed_check_forward := add_delayed_check;
-  ()
+  Env.add_delayed_check_forward := add_delayed_check
 
 (* drop the need to call [Parmatch.typed_case] from the external API *)
 let check_partial ?lev a b c cases =
@@ -8368,3 +8652,5 @@ let check_partial ?lev a b c cases =
 let type_expect env e ty = type_expect env e ty
 let type_exp env e = type_exp env e
 let type_argument env e t1 t2 = type_argument env e t1 t2
+
+let () = type_expect_ref := type_expect

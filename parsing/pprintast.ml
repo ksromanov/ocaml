@@ -175,8 +175,12 @@ module Doc = struct
     | Lident s -> ident_of_name ~kind f s
     | Ldot(y,s) ->
         protect_longident ~kind f (any_longident ~kind:Other) y.txt s.txt
-    | Lapply (y,s) ->
+    | Lapply (y, s, Nonimplicit) ->
         Format_doc.fprintf f "%a(%a)"
+          (any_longident ~kind:Other) y.txt
+          (any_longident ~kind:Other) s.txt
+    | Lapply (y, s, Implicit) ->
+        Format_doc.fprintf f "%a{%a}"
           (any_longident ~kind:Other) y.txt
           (any_longident ~kind:Other) s.txt
 
@@ -252,6 +256,10 @@ type space_formatter = (unit, Format.formatter, unit) format
 let override = function
   | Override -> "!"
   | Fresh -> ""
+
+let open_flag f = function
+  | Asttypes.Open_all x -> fprintf f "%s" (override x)
+  | Asttypes.Open_implicit -> fprintf f " implicit"
 
 (* variance encoding: need to sync up with the [parser.mly] *)
 let type_variance = function
@@ -427,7 +435,13 @@ let rec class_params_def ctxt f =  function
       pp f "[%a] " (* space *)
         (list (type_param ctxt) ~sep:",") l
 
-and type_with_label ctxt = labelled (core_type1 ctxt)
+and type_with_label ctxt f (label, c) =
+  match label with
+  | Parr_arg Nolabel    -> core_type1 ctxt f c (* otherwise parenthesize *)
+  | Parr_arg (Labelled s) -> pp f "%s:%a" s (core_type1 ctxt) c
+  | Parr_arg (Optional s) -> pp f "?%s:%a" s (core_type1 ctxt) c
+  | Parr_implicit s ->
+      pp f "{%s :@ %a}" s (core_type1 ctxt) c
 
 and functor_arg ctxt f (name, pck_ty) =
   pp f "@[<hov2>(module@ %s :@ %a)@]" name.txt (package_type ctxt) pck_ty
@@ -686,10 +700,10 @@ and simple_pattern ctxt (f:Format.formatter) (x:pattern) : unit =
 
 and label_exp ctxt f (l,opt,p) =
   match l with
-  | Nolabel ->
+  | Parr_arg Nolabel ->
       (* single case pattern parens needed here *)
       pp f "%a@ " (simple_pattern ctxt) p
-  | Optional rest ->
+  | Parr_arg (Optional rest) ->
       begin match p with
       | {ppat_desc = Ppat_var {txt;_}; ppat_attributes = []}
         when txt = rest ->
@@ -704,18 +718,21 @@ and label_exp ctxt f (l,opt,p) =
                  ident_of_name rest (pattern1 ctxt) p (expression ctxt) o
            | None -> pp f "?%a:%a@;" ident_of_name rest (simple_pattern ctxt) p)
       end
-  | Labelled l -> match p with
-    | {ppat_desc  = Ppat_var {txt;_}; ppat_attributes = []}
-      when txt = l ->
-        pp f "~%a@;" ident_of_name l
-    | _ ->  pp f "~%a:%a@;" ident_of_name l (simple_pattern ctxt) p
+  | Parr_arg (Labelled l) ->
+      (match p with
+      | {ppat_desc  = Ppat_var {txt;_}; ppat_attributes = []}
+        when txt = l ->
+          pp f "~%a@;" ident_of_name l
+      | _ ->  pp f "~%a:%a@;" ident_of_name l (simple_pattern ctxt) p)
+  | Parr_implicit _ ->
+      pp f "{%a}@ " (simple_pattern ctxt) p
 
 and sugar_expr ctxt f e =
   if e.pexp_attributes <> [] then false
   else match e.pexp_desc with
   | Pexp_apply ({ pexp_desc = Pexp_ident {txt = id; _};
                   pexp_attributes=[]; _}, args)
-    when List.for_all (fun (lab, _) -> lab = Nolabel) args -> begin
+    when List.for_all (fun (lab, _) -> lab = Papp_arg Nolabel) args -> begin
       let print_indexop a path_prefix assign left sep right print_index indices
           rem_args =
         let print_path ppf = function
@@ -791,7 +808,8 @@ and sugar_expr ctxt f e =
 
 and function_param ctxt f param =
   match param.pparam_desc with
-  | Pparam_val (a, b, c) -> label_exp ctxt f (a, b, c)
+  | Pparam_val (a, b, c) -> label_exp ctxt f (Parr_arg a, b, c)
+  | Pparam_implicit (name, _pkg) -> pp f "{%s}@;" name
   | Pparam_newtype ty -> pp f "(type %a)@;" ident_of_name ty.txt
 
 and function_body ctxt f function_body =
@@ -880,7 +898,8 @@ and expression ctxt f x =
             match view_fixity_of_exp e with
             | `Infix s ->
                 begin match l with
-                | [ (Nolabel, _) as arg1; (Nolabel, _) as arg2 ] ->
+                | [ (Papp_arg Nolabel, _) as arg1;
+                    (Papp_arg Nolabel, _) as arg2 ] ->
                     (* FIXME associativity label_x_expression_param *)
                     pp f "@[<2>%a@;%s@;%a@]"
                       (label_x_expression_param reset_ctxt) arg1 s
@@ -901,7 +920,7 @@ and expression ctxt f x =
                   then String.sub s 1 (String.length s -1)
                   else s in
                 begin match l with
-                | [(Nolabel, x)] ->
+                | [(Papp_arg Nolabel, x)] ->
                   pp f "@[<2>%s@;%a@]" s (simple_expr ctxt) x
                 | _   ->
                   pp f "@[<2>%a %a@]" (simple_expr ctxt) e
@@ -1159,8 +1178,8 @@ and class_type ctxt f x =
       extension ctxt f e;
       attributes ctxt f x.pcty_attributes
   | Pcty_open (o, e) ->
-      pp f "@[<2>let open%s %a in@;%a@]"
-        (override o.popen_override) longident_loc o.popen_expr
+      pp f "@[<2>let open%a %a in@;%a@]"
+        open_flag o.popen_flag longident_loc o.popen_expr
         (class_type ctxt) e
 
 (* [class type a = object end] *)
@@ -1287,8 +1306,8 @@ and class_expr ctxt f x =
           (class_type ctxt) ct
     | Pcl_extension e -> extension ctxt f e
     | Pcl_open (o, e) ->
-        pp f "@[<2>let open%s %a in@;%a@]"
-          (override o.popen_override) longident_loc o.popen_expr
+        pp f "@[<2>let open%a %a in@;%a@]"
+          open_flag o.popen_flag longident_loc o.popen_expr
           (class_expr ctxt) e
 
 and module_type ctxt f x =
@@ -1308,6 +1327,10 @@ and module_type ctxt f x =
             pp f "@[<hov2>(%s@ :@ %a)@ ->@ %a@]" name
               (module_type ctxt) mt1 (module_type ctxt) mt2
         end
+    | Pmty_functor (Implicit (s, mt1), mt2) ->
+        pp f "@[<hov2>functor@ {%s@ :@ %a}@ ->@ %a@]"
+          (Option.value s.txt ~default:"_")
+          (module_type ctxt) mt1 (module_type ctxt) mt2
     | Pmty_with (mt, []) -> module_type ctxt f mt
     | Pmty_with (mt, l) ->
         pp f "@[<hov2>%a@ with@ %a@]"
@@ -1398,12 +1421,14 @@ and signature_item ctxt f x : unit =
       end
   | Psig_module ({pmd_type={pmty_desc=Pmty_alias alias;
                             pmty_attributes=[]; _};_} as pmd) ->
-      pp f "@[<hov>module@ %s@ =@ %a@]%a"
+      pp f "@[<hov>%smodule@ %s@ =@ %a@]%a"
+        (match pmd.pmd_implicit with Implicit -> "implicit " | Nonimplicit -> "")
         (Option.value pmd.pmd_name.txt ~default:"_")
         longident_loc alias
         (item_attributes ctxt) pmd.pmd_attributes
   | Psig_module pmd ->
-      pp f "@[<hov>module@ %s@ :@ %a@]%a"
+      pp f "@[<hov>%smodule@ %s@ :@ %a@]%a"
+        (match pmd.pmd_implicit with Implicit -> "implicit " | Nonimplicit -> "")
         (Option.value pmd.pmd_name.txt ~default:"_")
         (module_type ctxt) pmd.pmd_type
         (item_attributes ctxt) pmd.pmd_attributes
@@ -1412,8 +1437,8 @@ and signature_item ctxt f x : unit =
         longident_loc pms.pms_manifest
         (item_attributes ctxt) pms.pms_attributes
   | Psig_open od ->
-      pp f "@[<hov2>open%s@ %a@]%a"
-        (override od.popen_override)
+      pp f "@[<hov2>open%a@ %a@]%a"
+        open_flag od.popen_flag
         longident_loc od.popen_expr
         (item_attributes ctxt) od.popen_attributes
   | Psig_include incl ->
@@ -1443,13 +1468,17 @@ and signature_item ctxt f x : unit =
         match l with
         | [] -> () ;
         | pmd :: tl ->
+            let implicit_prefix = match pmd.pmd_implicit with
+              | Implicit -> "implicit " | Nonimplicit -> "" in
             if not first then
-              pp f "@ @[<hov2>and@ %s:@ %a@]%a"
+              pp f "@ @[<hov2>and@ %s%s:@ %a@]%a"
+                implicit_prefix
                 (Option.value pmd.pmd_name.txt ~default:"_")
                 (module_type1 ctxt) pmd.pmd_type
                 (item_attributes ctxt) pmd.pmd_attributes
             else
-              pp f "@[<hov2>module@ rec@ %s:@ %a@]%a"
+              pp f "@[<hov2>%smodule@ rec@ %s:@ %a@]%a"
+                implicit_prefix
                 (Option.value pmd.pmd_name.txt ~default:"_")
                 (module_type1 ctxt) pmd.pmd_type
                 (item_attributes ctxt) pmd.pmd_attributes;
@@ -1481,11 +1510,17 @@ and module_expr ctxt f x =
         pp f "functor@ (%s@ :@ %a)@;->@;%a"
           (Option.value s.txt ~default:"_")
           (module_type ctxt) mt (module_expr ctxt) me
-    | Pmod_apply (me1, me2) ->
+    | Pmod_functor (Implicit (s, mt), me) ->
+        pp f "functor@ {%s@ :@ %a}@;->@;%a"
+          (Option.value s.txt ~default:"_")
+          (module_type ctxt) mt (module_expr ctxt) me
+    | Pmod_apply (me1, Pmarg_generative) ->
+        pp f "(%a)()" (module_expr ctxt) me1
+    | Pmod_apply (me1, Pmarg_applicative me2) ->
         pp f "(%a)(%a)" (module_expr ctxt) me1 (module_expr ctxt) me2
         (* Cf: #7200 *)
-    | Pmod_apply_unit me1 ->
-        pp f "(%a)()" (module_expr ctxt) me1
+    | Pmod_apply (me1, Pmarg_implicit me2) ->
+        pp f "(%a){%a}" (module_expr ctxt) me1 (module_expr ctxt) me2
     | Pmod_unpack e ->
         pp f "(val@ %a)" (expression ctxt) e
     | Pmod_extension e -> extension ctxt f e
@@ -1598,11 +1633,15 @@ and structure_item ctxt f x =
             | Named (s, mt) ->
               pp f "(%s:%a)" (Option.value s.txt ~default:"_")
                 (module_type ctxt) mt
+            | Implicit (s, mt) ->
+              pp f "{%s:%a}" (Option.value s.txt ~default:"_")
+                (module_type ctxt) mt
             end;
             module_helper me'
         | me -> me
       in
-      pp f "@[<hov2>module %s%a@]%a"
+      pp f "@[<hov2>%smodule %s%a@]%a"
+        (match x.pmb_implicit with Implicit -> "implicit " | Nonimplicit -> "")
         (Option.value x.pmb_name.txt ~default:"_")
         (fun f me ->
            let me = module_helper me in
@@ -1619,8 +1658,8 @@ and structure_item ctxt f x =
         ) x.pmb_expr
         (item_attributes ctxt) x.pmb_attributes
   | Pstr_open od ->
-      pp f "@[<2>open%s@;%a@]%a"
-        (override od.popen_override)
+      pp f "@[<2>open%a@;%a@]%a"
+        open_flag od.popen_flag
         (module_expr ctxt) od.popen_expr
         (item_attributes ctxt) od.popen_attributes
   | Pstr_modtype {pmtd_name=s; pmtd_type=md; pmtd_attributes=attrs} ->
@@ -1681,29 +1720,35 @@ and structure_item ctxt f x =
         (module_expr ctxt) incl.pincl_mod
         (item_attributes ctxt) incl.pincl_attributes
   | Pstr_recmodule decls -> (* 3.07 *)
+      let implicit_prefix pmb = match pmb.pmb_implicit with
+        | Implicit -> "implicit " | Nonimplicit -> "" in
       let aux f = function
         | ({pmb_expr={pmod_desc=Pmod_constraint (expr, typ)}} as pmb) ->
-            pp f "@[<hov2>@ and@ %s:%a@ =@ %a@]%a"
+            pp f "@[<hov2>@ and@ %s%s:%a@ =@ %a@]%a"
+              (implicit_prefix pmb)
               (Option.value pmb.pmb_name.txt ~default:"_")
               (module_type ctxt) typ
               (module_expr ctxt) expr
               (item_attributes ctxt) pmb.pmb_attributes
         | pmb ->
-            pp f "@[<hov2>@ and@ %s@ =@ %a@]%a"
+            pp f "@[<hov2>@ and@ %s%s@ =@ %a@]%a"
+              (implicit_prefix pmb)
               (Option.value pmb.pmb_name.txt ~default:"_")
               (module_expr ctxt) pmb.pmb_expr
               (item_attributes ctxt) pmb.pmb_attributes
       in
       begin match decls with
       | ({pmb_expr={pmod_desc=Pmod_constraint (expr, typ)}} as pmb) :: l2 ->
-          pp f "@[<hv>@[<hov2>module@ rec@ %s:%a@ =@ %a@]%a@ %a@]"
+          pp f "@[<hv>@[<hov2>%smodule@ rec@ %s:%a@ =@ %a@]%a@ %a@]"
+            (implicit_prefix pmb)
             (Option.value pmb.pmb_name.txt ~default:"_")
             (module_type ctxt) typ
             (module_expr ctxt) expr
             (item_attributes ctxt) pmb.pmb_attributes
             (fun f l2 -> List.iter (aux f) l2) l2
       | pmb :: l2 ->
-          pp f "@[<hv>@[<hov2>module@ rec@ %s@ =@ %a@]%a@ %a@]"
+          pp f "@[<hv>@[<hov2>%smodule@ rec@ %s@ =@ %a@]%a@ %a@]"
+            (implicit_prefix pmb)
             (Option.value pmb.pmb_name.txt ~default:"_")
             (module_expr ctxt) pmb.pmb_expr
             (item_attributes ctxt) pmb.pmb_attributes
@@ -1881,17 +1926,24 @@ and label_x_expression_param ctxt f (l,e) =
        pexp_attributes=[]} -> Some l
     | _ -> None
   in match l with
-  | Nolabel  -> expression2 ctxt f e (* level 2*)
-  | Optional str ->
+  | Papp_arg Nolabel  -> expression2 ctxt f e (* level 2*)
+  | Papp_arg (Optional str) ->
       if Some str = simple_name then
         pp f "?%a" ident_of_name str
       else
         pp f "?%a:%a" ident_of_name str (simple_expr ctxt) e
-  | Labelled lbl ->
+  | Papp_arg (Labelled lbl) ->
       if Some lbl = simple_name then
         pp f "~%a" ident_of_name lbl
       else
         pp f "~%a:%a" ident_of_name lbl (simple_expr ctxt) e
+  | Papp_implicit ->
+      pp f "{%a}" (module_expr ctxt)
+        (match e.pexp_desc with
+         | Pexp_pack (me, _) -> me
+         | _ -> { pmod_desc = Pmod_unpack e;
+                  pmod_loc = e.pexp_loc;
+                  pmod_attributes = [] })
 
 and tuple_expr_component ctxt f (l,e) =
   let simple_name = match e with

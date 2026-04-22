@@ -17,6 +17,7 @@ open Parsetree
 open Asttypes
 open Path
 open Types
+open Btype
 open Typecore
 open Typetexp
 
@@ -428,7 +429,8 @@ and class_type_aux env virt self_scope scty =
       let typ = Cty_signature clsig.csig_type in
       cltyp (Tcty_signature clsig) typ
 
-  | Pcty_arrow (l, sty, scty) ->
+  | Pcty_arrow (arr, sty, scty) ->
+      let l = (match arr with Parr_arg l -> l | Parr_implicit _ -> Nolabel) in
       let cty = transl_simple_type env ~closed:false sty in
       let ty = cty.ctyp_type in
       let ty =
@@ -436,7 +438,7 @@ and class_type_aux env virt self_scope scty =
         then Ctype.newty (Tconstr(Predef.path_option,[ty], ref Mnil))
         else ty in
       let clty = class_type env virt self_scope scty in
-      let typ = Cty_arrow (l, ty, clty.cltyp_type) in
+      let typ = Cty_arrow (Tarr_arg l, ty, clty.cltyp_type) in
       cltyp (Tcty_arrow (l, cty, clty)) typ
 
   | Pcty_open (od, e) ->
@@ -918,7 +920,7 @@ and class_field_second_pass cl_num sign met_env field =
            let self_param_type = Btype.newgenmono sign.Types.csig_self in
            let meth_type =
              mk_expected
-               (Btype.newgenty (Tarrow(Nolabel, self_param_type, ty, commu_ok)))
+               (Btype.newgenty (Tarrow(Tarr_arg Nolabel, self_param_type, ty, commu_ok)))
            in
            let texp =
              Ctype.with_raised_nongen_level
@@ -936,7 +938,7 @@ and class_field_second_pass cl_num sign met_env field =
            let self_param_type = Ctype.newmono sign.Types.csig_self in
            let meth_type =
              mk_expected (Ctype.newty
-              (Tarrow (Nolabel, self_param_type, unit_type, commu_ok)))
+              (Tarrow (Tarr_arg Nolabel, self_param_type, unit_type, commu_ok)))
            in
            let texp =
              Ctype.with_raised_nongen_level
@@ -1159,7 +1161,8 @@ and class_expr_aux cl_num final val_env met_env virt self_scope scl =
              is not detected for class-level let bindings.  See #5975.*)
       in
       class_expr cl_num final val_env met_env virt self_scope sfun
-  | Pcl_fun (l, None, spat, scl') ->
+  | Pcl_fun (arr, None, spat, scl') ->
+      let l = (match arr with Parr_arg l -> l | Parr_implicit _ -> Nolabel) in
       if has_poly_constraint spat then
         raise(Error(spat.ppat_loc, val_env, Polymorphic_class_parameter));
       let (pat, pv, val_env', met_env) =
@@ -1185,7 +1188,7 @@ and class_expr_aux cl_num final val_env met_env virt self_scope scl =
           pv
       in
       let rec not_nolabel_function = function
-        | Cty_arrow(Nolabel, _, _) -> false
+        | Cty_arrow(Tarr_arg Nolabel, _, _) -> false
         | Cty_arrow(_, _, cty) -> not_nolabel_function cty
         | _ -> true
       in
@@ -1202,15 +1205,20 @@ and class_expr_aux cl_num final val_env met_env virt self_scope scl =
       if Btype.is_optional l && not_nolabel_function cl.cl_type then
         Location.prerr_warning pat.pat_loc
           Warnings.Unerasable_optional_argument;
-      rc {cl_desc = Tcl_fun (l, pat, pv, cl, partial);
+      rc {cl_desc = Tcl_fun (Tarr_arg l, pat, pv, cl, partial);
           cl_loc = scl.pcl_loc;
           cl_type = Cty_arrow
-            (l, Ctype.instance pat.pat_type, cl.cl_type);
+            (Tarr_arg l, Ctype.instance pat.pat_type, cl.cl_type);
           cl_env = val_env;
           cl_attributes = scl.pcl_attributes;
          }
   | Pcl_apply (scl', sargs) ->
       assert (sargs <> []);
+      (* Convert apply_flag to arg_label for class application *)
+      let sargs = List.map (fun (af, e) ->
+        let l = match af with Papp_arg l -> l | Papp_implicit -> Nolabel in
+        (l, e)) sargs
+      in
       let cl =
         Ctype.with_local_level_generalize_structure_if_principal (fun () ->
             class_expr cl_num final val_env met_env virt self_scope scl'
@@ -1219,7 +1227,7 @@ and class_expr_aux cl_num final val_env met_env virt self_scope scl =
       let rec nonopt_labels ls ty_fun =
         match ty_fun with
         | Cty_arrow (l, _, ty_res) ->
-            if Btype.is_optional l then nonopt_labels ls ty_res
+            if arrow_is_optional l then nonopt_labels ls ty_res
             else nonopt_labels (l::ls) ty_res
         | _    -> ls
       in
@@ -1228,13 +1236,13 @@ and class_expr_aux cl_num final val_env met_env virt self_scope scl =
         let labels = nonopt_labels [] cl.cl_type in
         List.length labels = List.length sargs &&
         List.for_all (fun (l,_) -> l = Nolabel) sargs &&
-        List.exists (fun l -> l <> Nolabel) labels &&
+        List.exists (fun l -> not (arrow_is_simple l)) labels &&
         begin
           Location.prerr_warning
             cl.cl_loc
             (Warnings.Labels_omitted
-               (List.map Asttypes.string_of_label
-                         (List.filter ((<>) Nolabel) labels)));
+               (List.map label_name_of_arrow_raw
+                         (List.filter (fun l -> not (arrow_is_simple l)) labels)));
           true
         end
       in
@@ -1242,8 +1250,8 @@ and class_expr_aux cl_num final val_env met_env virt self_scope scl =
         match ty_fun, ty_fun0 with
         | Cty_arrow (l, ty, ty_fun), Cty_arrow (_, ty0, ty_fun0)
           when sargs <> [] ->
-            let name = Btype.label_name l
-            and optional = Btype.is_optional l in
+            let name = label_name_of_arrow l
+            and optional = arrow_is_optional l in
             let use_arg sarg l' =
               Arg (
                 if not optional || Btype.is_optional l' then
@@ -1281,11 +1289,11 @@ and class_expr_aux cl_num final val_env met_env virt self_scope scl =
                     if not optional && Btype.is_optional l' then
                       Location.prerr_warning sarg.pexp_loc
                         (Warnings.Nonoptional_label
-                           (Asttypes.string_of_label l));
+                           (label_name_of_arrow l));
                     remaining_sargs, use_arg sarg l'
                 | None ->
                     sargs,
-                    if Btype.is_optional l && List.mem_assoc Nolabel sargs then
+                    if arrow_is_optional l && List.mem_assoc Nolabel sargs then
                       eliminate_optional_arg ()
                     else
                       Omitted ()
@@ -1313,6 +1321,13 @@ and class_expr_aux cl_num final val_env met_env virt self_scope scl =
         let (_, ty_fun0) = Ctype.instance_class [] cl.cl_type in
         type_args [] [] cl.cl_type ty_fun0 sargs
       in
+      (* Convert arrow_flag args to (arg_label * apply_arg) for Tcl_apply *)
+      let args = List.map (fun (l, e) ->
+        let lbl = match l with
+          | Tarr_arg lbl -> lbl
+          | Tarr_implicit _ -> Nolabel
+        in (lbl, e)
+      ) args in
       rc {cl_desc = Tcl_apply (cl, args);
           cl_loc = scl.pcl_loc;
           cl_type = cty;
@@ -1448,8 +1463,12 @@ let var_option = Predef.type_option (Btype.newgenvar ())
 let rec approx_declaration cl =
   match cl.pcl_desc with
     Pcl_fun (l, _, _, cl) ->
+      let l = match l with
+        | Parr_arg lbl -> Tarr_arg lbl
+        | Parr_implicit name -> Tarr_implicit (Ident.create_local name)
+      in
       let arg =
-        if Btype.is_optional l then Ctype.instance var_option
+        if Btype.arrow_is_optional l then Ctype.instance var_option
         else Ctype.newvar () in
       let arg = Ctype.newmono arg in
       Ctype.newty (Tarrow (l, arg, approx_declaration cl, commu_ok))
@@ -1462,8 +1481,12 @@ let rec approx_declaration cl =
 let rec approx_description ct =
   match ct.pcty_desc with
     Pcty_arrow (l, _, ct) ->
+      let l = match l with
+        | Parr_arg lbl -> Tarr_arg lbl
+        | Parr_implicit name -> Tarr_implicit (Ident.create_local name)
+      in
       let arg =
-        if Btype.is_optional l then Ctype.instance var_option
+        if Btype.arrow_is_optional l then Ctype.instance var_option
         else Ctype.newvar () in
       let arg = Ctype.newmono arg in
       Ctype.newty (Tarrow (l, arg, approx_description ct, commu_ok))

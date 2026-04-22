@@ -160,6 +160,11 @@ let rec head = function
   | Pdot(p, _) | Pextra_ty (p, _) -> head p
   | Papply _ -> assert false
 
+let rec head_opt = function
+    Pident id -> Some id
+  | Pdot(p, _) | Pextra_ty (p, _) -> head_opt p
+  | Papply _ -> None
+
 let flatten =
   let rec flatten acc = function
     | Pident id -> `Ok (id, acc)
@@ -190,6 +195,21 @@ let is_constructor_typath p =
   match p with
   | Pident _ | Pdot _ | Papply _ -> false
   | Pextra_ty _ -> true
+
+let rec flatten_aux acc = function
+  | Pdot(p, s) -> flatten_aux ((s, 0) :: acc) p
+  | Pident id -> (id, acc)
+  | Papply _ | Pextra_ty _ -> assert false
+let flatten_with_pos path = flatten_aux [] path
+
+let rec to_longident = function
+  | Pident id -> Longident.Lident (Ident.name id)
+  | Pdot(p, s) -> Longident.Ldot (Location.mknoloc (to_longident p), Location.mknoloc s)
+  | Papply(p1, p2) ->
+      Longident.Lapply (Location.mknoloc (to_longident p1),
+                        Location.mknoloc (to_longident p2),
+                        Asttypes.Nonimplicit)
+  | Pextra_ty (p, _) -> to_longident p
 
 module T = struct
   type nonrec t = t

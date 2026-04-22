@@ -122,7 +122,8 @@ let iterator =
           List.for_all
             (function
               | { pparam_desc = Pparam_newtype _ } -> true
-              | { pparam_desc = Pparam_val _ } -> false)
+              | { pparam_desc = Pparam_val _ } -> false
+              | { pparam_desc = Pparam_implicit (_, _) } -> false)
             params
         then function_without_value_parameters loc
     | Pexp_struct_item ({pstr_loc = loc;

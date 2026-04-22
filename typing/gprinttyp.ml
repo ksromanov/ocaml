@@ -323,7 +323,7 @@ module Pp = struct
   let rec longident ppf = function
     | Longident.Lident s -> fprintf ppf "%s" s
     | Longident.Ldot (l,s) -> fprintf ppf "%a.%s"  longident l.txt s.txt
-    | Longident.Lapply(f,x) ->
+    | Longident.Lapply(f, x, _) ->
         fprintf ppf "%a(%a)" longident f.txt longident x.txt
 
   let color ppf = function
@@ -417,9 +417,10 @@ module Pp = struct
     fprintf ppf "cluster_%d" !cluster_counter
 
   let exponent_of_label ppf = function
-    | Asttypes.Nolabel -> ()
-    | Asttypes.Labelled s -> fprintf ppf "<SUP>%s</SUP>" s
-    | Asttypes.Optional s -> fprintf ppf "<SUP>?%s</SUP>" s
+    | Types.Tarr_arg Asttypes.Nolabel -> ()
+    | Types.Tarr_arg (Asttypes.Labelled s) -> fprintf ppf "<SUP>%s</SUP>" s
+    | Types.Tarr_arg (Asttypes.Optional s) -> fprintf ppf "<SUP>?%s</SUP>" s
+    | Types.Tarr_implicit id -> fprintf ppf "<SUP>{%s}</SUP>" (Ident.name id)
 
   let pretty_var ppf name =
     let name = Option.value ~default:"_" name in
@@ -683,8 +684,8 @@ module Digraph = struct
     | Types.Tarrow(l,t1,t2,_) ->
        mk "→%a" Pp.exponent_of_label l |> numbered [t1; t2]
     | Types.Tfunctor(l,us,{pack_path; pack_constraints},t2) ->
-        mk "→%a (%a : %a)" Pp.exponent_of_label l
-                    Ident.Unscoped.print us
+        mk "→%a (%s : %a)" Pp.exponent_of_label (Types.Tarr_arg l)
+                    (Ident.Unscoped.name us)
                     pp_path pack_path
           |> package_constraints params id pack_constraints
           |> numbered [t2]

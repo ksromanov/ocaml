@@ -24,6 +24,16 @@
 (** Asttypes exposes basic definitions shared both by Parsetree and Types. *)
 open Asttypes
 
+(** Arrow flag: distinguishes regular (labelled) arrows from implicit arrows. *)
+type arrow_flag =
+  | Tarr_arg of arg_label           (* regular or labelled arrow *)
+  | Tarr_implicit of Ident.t        (* {M : S} -> ... *)
+
+(** Apply flag: distinguishes regular application from implicit application. *)
+type apply_flag =
+  | Tapp_arg of arg_label           (* regular or labelled application *)
+  | Tapp_implicit                   (* f {M} *)
+
 (** Type expressions for the core language.
 
     The [type_desc] variant defines all the possible type expressions one can
@@ -66,10 +76,11 @@ type type_desc =
   (** [Tvar (Some "a")] ==> ['a] or ['_a]
       [Tvar None]       ==> [_] *)
 
-  | Tarrow of arg_label * type_expr * type_expr * commutable
-  (** [Tarrow (Nolabel,      e1, e2, c)] ==> [e1    -> e2]
-      [Tarrow (Labelled "l", e1, e2, c)] ==> [l:e1  -> e2]
-      [Tarrow (Optional "l", e1, e2, c)] ==> [?l:e1 -> e2]
+  | Tarrow of arrow_flag * type_expr * type_expr * commutable
+  (** [Tarrow (Tarr_arg Nolabel,      e1, e2, c)] ==> [e1    -> e2]
+      [Tarrow (Tarr_arg (Labelled "l"), e1, e2, c)] ==> [l:e1  -> e2]
+      [Tarrow (Tarr_arg (Optional "l"), e1, e2, c)] ==> [?l:e1 -> e2]
+      [Tarrow (Tarr_implicit id, e1, e2, c)] ==> [{id : e1} -> e2]
 
       See [commutable] for the last argument.
       The argument type must be a [Tpoly] node. *)
@@ -664,7 +675,7 @@ and type_transparence =
 type class_type =
     Cty_constr of Path.t * type_expr list * class_type
   | Cty_signature of class_signature
-  | Cty_arrow of arg_label * type_expr * class_type
+  | Cty_arrow of arrow_flag * type_expr * class_type
 
 type class_declaration =
   { cty_params: type_expr list;
@@ -703,6 +714,7 @@ type module_type =
 and functor_parameter =
   | Unit
   | Named of Ident.t option * module_type
+  | Implicit of Ident.t option * module_type
 
 and module_presence =
   | Mp_present
@@ -726,6 +738,7 @@ and module_declaration =
     md_attributes: Parsetree.attributes;
     md_loc: Location.t;
     md_uid: Uid.t;
+    md_implicit: Asttypes.implicit_flag;
   }
 
 and modtype_declaration =

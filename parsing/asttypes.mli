@@ -44,6 +44,10 @@ type virtual_flag = Virtual | Concrete
 
 type override_flag = Override | Fresh
 
+type open_flag = Open_all of override_flag | Open_implicit
+
+type implicit_flag = Nonimplicit | Implicit
+
 type closed_flag = Closed | Open
 
 type label = string

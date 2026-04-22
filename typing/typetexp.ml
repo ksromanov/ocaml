@@ -468,7 +468,7 @@ and transl_type_aux env ~row_context ~aliased ~policy styp =
       end
     in
     ctyp (Ttyp_var name) ty
-  | Ptyp_arrow(l, st1, st2) ->
+  | Ptyp_arrow(Parr_arg l, st1, st2) ->
     let arg_cty = transl_type env ~policy ~row_context st1 in
     let ret_cty = transl_type env ~policy ~row_context st2 in
     let arg_ty = arg_cty.ctyp_type in
@@ -485,8 +485,11 @@ and transl_type_aux env ~row_context ~aliased ~policy styp =
             (newconstr Predef.path_option [Btype.tpoly_get_mono arg_ty])
         end
     in
-    let ty = newty (Tarrow(l, arg_ty, ret_cty.ctyp_type, commu_ok)) in
+    let ty = newty (Tarrow(Tarr_arg l, arg_ty, ret_cty.ctyp_type, commu_ok)) in
     ctyp (Ttyp_arrow (l, arg_cty, ret_cty)) ty
+  | Ptyp_arrow(Parr_implicit _, _, _) ->
+    (* Implicit arrows are handled by typeimplicit - should not reach here *)
+    raise (Error (styp.ptyp_loc, env, Unbound_type_variable ("{implicit}", [])))
   | Ptyp_tuple stl ->
     assert (List.length stl >= 2);
     Option.iter (fun l -> raise (Error (loc, env, Repeated_tuple_label l)))

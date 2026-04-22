@@ -386,8 +386,8 @@ val enter_extension:
   scope:int -> rebind:bool -> string ->
   extension_constructor -> t -> Ident.t * t
 val enter_module:
-  scope:int -> ?noalias:bool -> string -> module_presence ->
-  module_type -> t -> Ident.t * t
+  scope:int -> ?noalias:bool -> ?implicit_:Asttypes.implicit_flag -> string ->
+  module_presence -> module_type -> t -> Ident.t * t
 val enter_module_declaration:
   scope:int -> ?noalias:bool -> ?shape:Shape.t -> string -> module_presence ->
   module_declaration -> t -> Ident.t * t
@@ -450,6 +450,17 @@ val is_imported_opaque: modname -> bool
 
 (* [register_import_as_opaque md] registers [md] as an opaque imported module *)
 val register_import_as_opaque: modname -> unit
+
+val add_import: string -> unit
+
+(* Modular implicits *)
+val open_implicit: Path.t -> signature -> t -> t
+val set_implicit_level: Ident.t -> int -> t -> t
+val implicit_level: Path.t -> t -> int
+val implicit_cannot_occur: Path.t -> t -> bool
+val forbid_implicit_occur: Ident.t -> t -> t
+val implicit_instances:
+  t -> (Path.t * (Ident.t * module_type) list * module_type) list
 
 (* Summaries -- compact representation of an environment, to be
    exported in debugging information. *)
@@ -555,3 +566,15 @@ val scrape_alias: t -> module_type -> module_type
 val check_value_name: string -> Location.t -> unit
 
 val print_address : Format.formatter -> address -> unit
+
+module Persistent_signature : sig
+  type t =
+    { filename : string; (** Name of the file containing the signature. *)
+      cmi : Cmi_format.cmi_infos;
+      visibility : Load_path.visibility }
+
+  (** Function used to load a persistent signature. The default is to look for
+      the .cmi file in the load path. This function can be overridden to load
+      it from memory, for instance to build a self-contained toplevel. *)
+  val load : (allow_hidden:bool -> unit_name:string -> t option) ref
+end

@@ -181,7 +181,7 @@ type error =
       previous_arg_loc : Location.t;
       extra_arg_loc : Location.t;
     }
-  | Apply_wrong_label of arg_label * type_expr * bool
+  | Apply_wrong_label of apply_flag * type_expr * bool
   | Label_multiply_defined of string
   | Label_missing of Ident.t list
   | Label_not_mutable of Longident.t
@@ -206,8 +206,8 @@ type error =
   | Not_a_function of type_expr * type_forcing_context option
   | Too_many_arguments of type_expr * type_forcing_context option
   | Abstract_wrong_label of
-      { got           : arg_label
-      ; expected      : arg_label
+      { got           : arrow_flag
+      ; expected      : arrow_flag
       ; expected_type : type_expr
       ; explanation   : type_forcing_context option
       }
@@ -220,6 +220,10 @@ type error =
   | Unexpected_existential of existential_restriction * string
   | Invalid_interval
   | Invalid_for_loop_index
+  | Apply_unexpected_implicit of type_expr
+  | No_instance_found of Typeimplicit.pending_implicit
+  | Ambiguous_implicit of Typeimplicit.pending_implicit * Path.t * Path.t
+  | Termination_fail of Typeimplicit.pending_implicit
   | No_value_clauses
   | Exception_pattern_disallowed
   | Mixed_value_and_exception_patterns_under_guard
@@ -260,7 +264,6 @@ exception Error of Location.t * Env.t * error
 exception Error_forward of Location.error
 
 val report_error: loc:Location.t -> Env.t -> error -> Location.error
- (** @deprecated.  Use {!Location.error_of_exn}, {!Location.print_report}. *)
 
 (* Forward declaration, to be filled in by Typemod.type_module *)
 val type_module:

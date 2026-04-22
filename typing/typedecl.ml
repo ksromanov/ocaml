@@ -1662,11 +1662,11 @@ type native_repr_attribute =
   | Native_repr_attr_present of native_repr_kind
 
 let get_native_repr_attribute attrs ~global_repr =
-  match
-    Attr_helper.get_no_payload_attribute "unboxed"  attrs,
-    Attr_helper.get_no_payload_attribute "untagged" attrs,
-    global_repr
-  with
+  let unboxed =
+    Attr_helper.get_no_payload_attribute "unboxed"  attrs in
+  let untagged =
+    Attr_helper.get_no_payload_attribute "untagged" attrs in
+  match unboxed, untagged, global_repr with
   | None, None, None -> Native_repr_attr_absent
   | None, None, Some repr -> Native_repr_attr_present repr
   | Some _, None, None -> Native_repr_attr_present Unboxed

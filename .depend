@@ -1273,10 +1273,12 @@ typing/path.cmo : \
 typing/path.cmx : \
     parsing/lexer.cmx \
     typing/ident.cmx \
+    parsing/longident.cmx \
     utils/format_doc.cmx \
     typing/path.cmi
 typing/path.cmi : \
     typing/ident.cmi \
+    parsing/longident.cmi \
     utils/format_doc.cmi
 typing/patterns.cmo : \
     typing/types.cmi \
@@ -2314,6 +2316,7 @@ typing/untypeast.cmo : \
     parsing/ast_helper.cmi \
     typing/untypeast.cmi
 typing/untypeast.cmx : \
+    typing/types.cmx \
     typing/typedtree.cmx \
     typing/path.cmx \
     parsing/parsetree.cmi \
@@ -10937,3 +10940,55 @@ otherlibs/dynlink/native/dynlink.cmx : \
     otherlibs/dynlink/dynlink_common.cmx \
     otherlibs/dynlink/dynlink_cmxs_format.cmi \
     otherlibs/dynlink/native/dynlink.cmi
+
+# Modular implicits dependencies
+typing/typeimplicit.cmi : \
+    typing/types.cmi \
+    typing/typedtree.cmi \
+    typing/path.cmi \
+    parsing/longident.cmi \
+    parsing/location.cmi \
+    typing/ident.cmi \
+    typing/env.cmi
+typing/typeimplicit.cmo : \
+    typing/typeimplicit.cmi \
+    typing/btype.cmi \
+    typing/ctype.cmi \
+    typing/env.cmi \
+    typing/subst.cmi \
+    typing/types.cmi \
+    parsing/asttypes.cmi
+typing/typeimplicit.cmx : \
+    typing/typeimplicit.cmi \
+    typing/btype.cmx \
+    typing/ctype.cmx \
+    typing/env.cmx \
+    typing/subst.cmx \
+    typing/types.cmx \
+    parsing/asttypes.cmi
+typing/implicitsearch.cmi :
+typing/implicitsearch.cmo : \
+    typing/implicitsearch.cmi \
+    typing/typeimplicit.cmi \
+    typing/btype.cmi \
+    typing/ctype.cmi \
+    typing/env.cmi \
+    typing/includemod.cmi \
+    typing/subst.cmi \
+    typing/typemod.cmi \
+    typing/types.cmi \
+    typing/printtyp.cmi \
+    utils/misc.cmi
+typing/implicitsearch.cmx : \
+    typing/typeimplicit.cmi \
+    typing/btype.cmx \
+    typing/ctype.cmx \
+    typing/env.cmx \
+    typing/includemod.cmx \
+    typing/subst.cmx \
+    typing/typemod.cmx \
+    typing/types.cmx \
+    typing/printtyp.cmx \
+    utils/misc.cmx
+typing/typecore.cmi : \
+    typing/typeimplicit.cmi

@@ -39,8 +39,10 @@ let rec fmt_longident_aux f x =
   match x with
   | Longident.Lident (s) -> fprintf f "%s" s
   | Longident.Ldot (y, s) -> fprintf f "%a.%s" fmt_longident_aux y.txt s.txt
-  | Longident.Lapply (y, z) ->
+  | Longident.Lapply (y, z, Nonimplicit) ->
       fprintf f "%a(%a)" fmt_longident_aux y.txt fmt_longident_aux z.txt
+  | Longident.Lapply (y, z, Implicit) ->
+      fprintf f "%a{%a}" fmt_longident_aux y.txt fmt_longident_aux z.txt
 
 let fmt_longident f x = fprintf f "\"%a\"" fmt_longident_aux x
 
@@ -71,6 +73,23 @@ let fmt_override_flag f x =
   match x with
   | Override -> fprintf f "Override"
   | Fresh -> fprintf f "Fresh"
+
+let fmt_open_flag ppf = function
+  | Asttypes.Open_all Override -> fprintf ppf "Override"
+  | Asttypes.Open_all Fresh -> fprintf ppf "Fresh"
+  | Asttypes.Open_implicit -> fprintf ppf "Implicit"
+
+let fmt_arrow_flag ppf = function
+  | Parsetree.Parr_arg Asttypes.Nolabel -> ()
+  | Parsetree.Parr_arg (Asttypes.Labelled s) -> fprintf ppf "~%s:" s
+  | Parsetree.Parr_arg (Asttypes.Optional s) -> fprintf ppf "?%s:" s
+  | Parsetree.Parr_implicit s -> fprintf ppf "{%s}" s
+
+let fmt_apply_flag ppf = function
+  | Parsetree.Papp_arg Asttypes.Nolabel -> ()
+  | Parsetree.Papp_arg (Asttypes.Labelled s) -> fprintf ppf "~%s:" s
+  | Parsetree.Papp_arg (Asttypes.Optional s) -> fprintf ppf "?%s:" s
+  | Parsetree.Papp_implicit -> fprintf ppf "{implicit}"
 
 let fmt_closed_flag f x =
   match x with
@@ -147,8 +166,7 @@ let rec core_type i ppf x =
   | Ptyp_any -> line i ppf "Ptyp_any\n";
   | Ptyp_var (s) -> line i ppf "Ptyp_var %s\n" s;
   | Ptyp_arrow (l, ct1, ct2) ->
-      line i ppf "Ptyp_arrow\n";
-      arg_label i ppf l;
+      line i ppf "Ptyp_arrow %a\n" fmt_arrow_flag l;
       core_type i ppf ct1;
       core_type i ppf ct2;
   | Ptyp_tuple l ->
@@ -297,7 +315,7 @@ and expression i ppf x =
   | Pexp_apply (e, l) ->
       line i ppf "Pexp_apply\n";
       expression i ppf e;
-      list i label_x_expression ppf l;
+      list i apply_flag_x_expression ppf l;
   | Pexp_match (e, l) ->
       line i ppf "Pexp_match\n";
       expression i ppf e;
@@ -411,6 +429,8 @@ and function_param i ppf { pparam_desc = desc; pparam_loc = loc } =
       arg_label (i+1) ppf l;
       option (i+1) expression ppf eo;
       pattern (i+1) ppf p
+  | Pparam_implicit (name, _pkg) ->
+      line i ppf "Pparam_implicit \"%s\" %a\n" name fmt_location loc
   | Pparam_newtype ty ->
       line i ppf "Pparam_newtype \"%s\" %a\n" ty.txt fmt_location loc
 
@@ -561,15 +581,14 @@ and class_type i ppf x =
       line i ppf "Pcty_signature\n";
       class_signature i ppf cs;
   | Pcty_arrow (l, co, cl) ->
-      line i ppf "Pcty_arrow\n";
-      arg_label i ppf l;
+      line i ppf "Pcty_arrow %a\n" fmt_arrow_flag l;
       core_type i ppf co;
       class_type i ppf cl;
   | Pcty_extension (s, arg) ->
       line i ppf "Pcty_extension \"%s\"\n" s.txt;
       payload i ppf arg
   | Pcty_open (o, e) ->
-      line i ppf "Pcty_open %a %a\n" fmt_override_flag o.popen_override
+      line i ppf "Pcty_open %a %a\n" fmt_open_flag o.popen_flag
         fmt_longident_loc o.popen_expr;
       class_type i ppf e
 
@@ -638,15 +657,14 @@ and class_expr i ppf x =
       line i ppf "Pcl_structure\n";
       class_structure i ppf cs;
   | Pcl_fun (l, eo, p, e) ->
-      line i ppf "Pcl_fun\n";
-      arg_label i ppf l;
+      line i ppf "Pcl_fun %a\n" fmt_arrow_flag l;
       option i expression ppf eo;
       pattern i ppf p;
       class_expr i ppf e;
   | Pcl_apply (ce, l) ->
       line i ppf "Pcl_apply\n";
       class_expr i ppf ce;
-      list i label_x_expression ppf l;
+      list i apply_flag_x_expression ppf l;
   | Pcl_let (rf, l, ce) ->
       line i ppf "Pcl_let %a\n" fmt_rec_flag rf;
       list i value_binding ppf l;
@@ -659,7 +677,7 @@ and class_expr i ppf x =
       line i ppf "Pcl_extension \"%s\"\n" s.txt;
       payload i ppf arg
   | Pcl_open (o, e) ->
-      line i ppf "Pcl_open %a %a\n" fmt_override_flag o.popen_override
+      line i ppf "Pcl_open %a %a\n" fmt_open_flag o.popen_flag
         fmt_longident_loc o.popen_expr;
       class_expr i ppf e
 
@@ -734,6 +752,10 @@ and module_type i ppf x =
       line i ppf "Pmty_functor %a\n" fmt_str_opt_loc s;
       module_type i ppf mt1;
       module_type i ppf mt2;
+  | Pmty_functor (Implicit (s, mt1), mt2) ->
+      line i ppf "Pmty_functor {%a}\n" fmt_str_opt_loc s;
+      module_type i ppf mt1;
+      module_type i ppf mt2;
   | Pmty_with (mt, l) ->
       line i ppf "Pmty_with\n";
       module_type i ppf mt;
@@ -790,7 +812,7 @@ and signature_item i ppf x =
       attributes i ppf x.pmtd_attributes;
       modtype_declaration i ppf x.pmtd_type
   | Psig_open od ->
-      line i ppf "Psig_open %a %a\n" fmt_override_flag od.popen_override
+      line i ppf "Psig_open %a %a\n" fmt_open_flag od.popen_flag
         fmt_longident_loc od.popen_expr;
       attributes i ppf od.popen_attributes
   | Psig_include incl ->
@@ -855,13 +877,21 @@ and module_expr i ppf x =
       line i ppf "Pmod_functor %a\n" fmt_str_opt_loc s;
       module_type i ppf mt;
       module_expr i ppf me;
-  | Pmod_apply (me1, me2) ->
+  | Pmod_functor (Implicit (s, mt), me) ->
+      line i ppf "Pmod_functor {%a}\n" fmt_str_opt_loc s;
+      module_type i ppf mt;
+      module_expr i ppf me;
+  | Pmod_apply (me1, Pmarg_generative) ->
+      line i ppf "Pmod_apply_generative\n";
+      module_expr i ppf me1;
+  | Pmod_apply (me1, Pmarg_applicative me2) ->
       line i ppf "Pmod_apply\n";
       module_expr i ppf me1;
       module_expr i ppf me2;
-  | Pmod_apply_unit me1 ->
-      line i ppf "Pmod_apply_unit\n";
-      module_expr i ppf me1
+  | Pmod_apply (me1, Pmarg_implicit me2) ->
+      line i ppf "Pmod_apply_implicit\n";
+      module_expr i ppf me1;
+      module_expr i ppf me2;
   | Pmod_constraint (me, mt) ->
       line i ppf "Pmod_constraint\n";
       module_expr i ppf me;
@@ -912,7 +942,7 @@ and structure_item i ppf x =
       attributes i ppf x.pmtd_attributes;
       modtype_declaration i ppf x.pmtd_type
   | Pstr_open od ->
-      line i ppf "Pstr_open %a\n" fmt_override_flag od.popen_override;
+      line i ppf "Pstr_open %a\n" fmt_open_flag od.popen_flag;
       module_expr i ppf od.popen_expr;
       attributes i ppf od.popen_attributes
   | Pstr_class (l) ->
@@ -932,13 +962,19 @@ and structure_item i ppf x =
   | Pstr_attribute a ->
       attribute i ppf "Pstr_attribute" a
 
+and fmt_implicit_flag ppf = function
+  | Asttypes.Nonimplicit -> ()
+  | Asttypes.Implicit -> fprintf ppf " implicit"
+
 and module_declaration i ppf pmd =
   str_opt_loc i ppf pmd.pmd_name;
+  line (i+1) ppf "pmd_implicit =%a\n" fmt_implicit_flag pmd.pmd_implicit;
   attributes i ppf pmd.pmd_attributes;
   module_type (i+1) ppf pmd.pmd_type;
 
 and module_binding i ppf x =
   str_opt_loc i ppf x.pmb_name;
+  line (i+1) ppf "pmb_implicit =%a\n" fmt_implicit_flag x.pmb_implicit;
   attributes i ppf x.pmb_attributes;
   module_expr (i+1) ppf x.pmb_expr
 
@@ -1016,9 +1052,8 @@ and longident_x_expression i ppf (li, e) =
   line i ppf "%a\n" fmt_longident_loc li;
   expression (i+1) ppf e;
 
-and label_x_expression i ppf (l,e) =
-  line i ppf "<arg>\n";
-  arg_label i ppf l;
+and apply_flag_x_expression i ppf (l,e) =
+  line i ppf "<arg> %a\n" fmt_apply_flag l;
   expression (i+1) ppf e;
 
 and label_x_bool_x_core_type_list i ppf x =

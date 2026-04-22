@@ -244,6 +244,7 @@ exception Apply_error of {
   }
 
 val expand_module_alias: strengthen:bool -> Env.t -> Path.t -> Types.module_type
+val expand_module_path: Env.t -> pos list -> Path.t -> Types.module_type
 
 (** Error message functions *)
 

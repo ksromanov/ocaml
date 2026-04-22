@@ -75,7 +75,7 @@ let rec iter_loc_lid sub lid =
   | Lident _ -> ()
   | Ldot (lid, id) ->
       iter_loc sub lid; iter_loc_lid sub lid.txt; iter_loc sub id
-  | Lapply (lid, lid') ->
+  | Lapply (lid, lid', _) ->
       iter_loc sub lid; iter_loc_lid sub lid.txt;
       iter_loc sub lid'; iter_loc_lid sub lid'.txt
 
@@ -448,7 +448,7 @@ let class_description sub x =
 
 let functor_parameter sub = function
   | Unit -> ()
-  | Named (_, s, mtype) -> iter_loc sub s; sub.module_type sub mtype
+  | Named (_, s, mtype) | Implicit (_, s, mtype) -> iter_loc sub s; sub.module_type sub mtype
 
 let module_type sub {mty_loc; mty_desc; mty_env; mty_attributes; _} =
   sub.location sub mty_loc;

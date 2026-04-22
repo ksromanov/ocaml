@@ -550,6 +550,7 @@ module Lazy_types = struct
       mdl_attributes: Parsetree.attributes;
       mdl_loc: Location.t;
       mdl_uid: Uid.t;
+      mdl_implicit: Asttypes.implicit_flag;
     }
 
   and modtype =
@@ -587,6 +588,7 @@ module Lazy_types = struct
   and functor_parameter =
     | Unit
     | Named of Ident.t option * modtype
+    | Implicit of Ident.t option * modtype
 
 end
 open Lazy_types
@@ -647,21 +649,24 @@ let rec lazy_module_decl md =
   { mdl_type = lazy_modtype md.md_type;
     mdl_attributes = md.md_attributes;
     mdl_loc = md.md_loc;
-    mdl_uid = md.md_uid }
+    mdl_uid = md.md_uid;
+    mdl_implicit = md.md_implicit }
 
 and subst_lazy_module_decl scoping s md =
   let mdl_type = subst_lazy_modtype scoping s md.mdl_type in
   { mdl_type;
     mdl_attributes = attrs s md.mdl_attributes;
     mdl_loc = loc s md.mdl_loc;
-    mdl_uid = md.mdl_uid }
+    mdl_uid = md.mdl_uid;
+    mdl_implicit = md.mdl_implicit }
 
 and force_module_decl md =
   let md_type = force_modtype md.mdl_type in
   { md_type;
     md_attributes = md.mdl_attributes;
     md_loc = md.mdl_loc;
-    md_uid = md.mdl_uid }
+    md_uid = md.mdl_uid;
+    md_implicit = md.mdl_implicit }
 
 and lazy_modtype = function
   | Mty_ident p -> MtyL_ident p
@@ -670,6 +675,8 @@ and lazy_modtype = function
   | Mty_functor (Unit, mty) -> MtyL_functor (Unit, lazy_modtype mty)
   | Mty_functor (Named (id, arg), res) ->
      MtyL_functor (Named (id, lazy_modtype arg), lazy_modtype res)
+  | Mty_functor (Implicit (id, arg), res) ->
+     MtyL_functor (Implicit (id, lazy_modtype arg), lazy_modtype res)
   | Mty_alias p -> MtyL_alias p
 
 and subst_lazy_modtype scoping s = function
@@ -696,6 +703,13 @@ and subst_lazy_modtype scoping s = function
       let id' = Ident.rename id in
       MtyL_functor(Named (Some id', (subst_lazy_modtype scoping s) arg),
                   subst_lazy_modtype scoping (add_module id (Pident id') s) res)
+  | MtyL_functor(Implicit (None, arg), res) ->
+      MtyL_functor(Implicit (None, (subst_lazy_modtype scoping s) arg),
+                   subst_lazy_modtype scoping s res)
+  | MtyL_functor(Implicit (Some id, arg), res) ->
+      let id' = Ident.rename id in
+      MtyL_functor(Implicit (Some id', (subst_lazy_modtype scoping s) arg),
+                  subst_lazy_modtype scoping (add_module id (Pident id') s) res)
   | MtyL_alias p ->
       MtyL_alias (module_path s p)
 
@@ -706,7 +720,8 @@ and force_modtype = function
      let param : Types.functor_parameter =
        match param with
        | Unit -> Unit
-       | Named (id, mty) -> Named (id, force_modtype mty) in
+       | Named (id, mty) -> Named (id, force_modtype mty)
+       | Implicit (id, mty) -> Implicit (id, force_modtype mty) in
      Mty_functor (param, force_modtype res)
   | MtyL_alias p -> Mty_alias p
 

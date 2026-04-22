@@ -22,6 +22,14 @@
 
 open Asttypes
 
+type arrow_flag =
+  | Parr_arg of arg_label           (* regular or labelled arrow *)
+  | Parr_implicit of string         (* {M : S} -> ... *)
+
+type apply_flag =
+  | Papp_arg of arg_label           (* regular or labelled application *)
+  | Papp_implicit                   (* f {M} *)
+
 type constant = {
   pconst_desc : constant_desc;
   pconst_loc : Location.t;
@@ -92,14 +100,12 @@ and core_type =
 and core_type_desc =
   | Ptyp_any  (** [_] *)
   | Ptyp_var of string  (** A type variable such as ['a] *)
-  | Ptyp_arrow of arg_label * core_type * core_type
+  | Ptyp_arrow of arrow_flag * core_type * core_type
       (** [Ptyp_arrow(lbl, T1, T2)] represents:
-            - [T1 -> T2]    when [lbl] is
-                                     {{!Asttypes.arg_label.Nolabel}[Nolabel]},
-            - [~l:T1 -> T2] when [lbl] is
-                                     {{!Asttypes.arg_label.Labelled}[Labelled]},
-            - [?l:T1 -> T2] when [lbl] is
-                                     {{!Asttypes.arg_label.Optional}[Optional]}.
+            - [T1 -> T2]       Simple
+            - [~l:T1 -> T2]    Labelled
+            - [?l:T1 -> T2]    Optional
+            - [{M:S} -> T2]    Implicit
          *)
   | Ptyp_tuple of (string option * core_type) list
       (** [Ptyp_tuple(tl)] represents a product type:
@@ -347,14 +353,9 @@ and expression_desc =
       if [params] does not contain a [Pparam_val _], [body] must be
       [Pfunction_cases _].
   *)
-  | Pexp_apply of expression * (arg_label * expression) list
+  | Pexp_apply of expression * (apply_flag * expression) list
       (** [Pexp_apply(E0, [(l1, E1) ; ... ; (ln, En)])]
             represents [E0 ~l1:E1 ... ~ln:En]
-
-            [li] can be
-              {{!Asttypes.arg_label.Nolabel}[Nolabel]}   (non labeled argument),
-              {{!Asttypes.arg_label.Labelled}[Labelled]} (labelled arguments) or
-              {{!Asttypes.arg_label.Optional}[Optional]} (optional argument).
 
            Invariant: [n > 0]
          *)
@@ -482,6 +483,10 @@ and function_param_desc =
 
       Note: If [E0] is provided, only
       {{!Asttypes.arg_label.Optional}[Optional]} is allowed.
+  *)
+  | Pparam_implicit of string * package_type
+  (** [Pparam_implicit (name, S)] represents the parameter [{name : S}] in
+      [fun {name : S} -> ...]. The constraint pattern is generated automatically.
   *)
   | Pparam_newtype of string loc
   (** [Pparam_newtype x] represents the parameter [(type x)].
@@ -726,14 +731,11 @@ and class_type_desc =
       (** - [c]
             - [['a1, ..., 'an] c] *)
   | Pcty_signature of class_signature  (** [object ... end] *)
-  | Pcty_arrow of arg_label * core_type * class_type
+  | Pcty_arrow of arrow_flag * core_type * class_type
       (** [Pcty_arrow(lbl, T, CT)] represents:
-            - [T -> CT]
-                     when [lbl] is {{!Asttypes.arg_label.Nolabel}[Nolabel]},
-            - [~l:T -> CT]
-                     when [lbl] is {{!Asttypes.arg_label.Labelled}[Labelled l]},
-            - [?l:T -> CT]
-                     when [lbl] is {{!Asttypes.arg_label.Optional}[Optional l]}.
+            - [T -> CT]       Simple
+            - [~l:T -> CT]    Labelled l
+            - [?l:T -> CT]    Optional l
          *)
   | Pcty_extension of extension  (** [%id] *)
   | Pcty_open of open_description * class_type  (** [let open M in CT] *)
@@ -803,22 +805,14 @@ and class_expr_desc =
   | Pcl_constr of Longident.t loc * core_type list
       (** [c] and [['a1, ..., 'an] c] *)
   | Pcl_structure of class_structure  (** [object ... end] *)
-  | Pcl_fun of arg_label * expression option * pattern * class_expr
+  | Pcl_fun of arrow_flag * expression option * pattern * class_expr
       (** [Pcl_fun(lbl, exp0, P, CE)] represents:
-            - [fun P -> CE]
-                     when [lbl]  is {{!Asttypes.arg_label.Nolabel}[Nolabel]}
-                      and [exp0] is [None],
-            - [fun ~l:P -> CE]
-                     when [lbl]  is {{!Asttypes.arg_label.Labelled}[Labelled l]}
-                      and [exp0] is [None],
-            - [fun ?l:P -> CE]
-                     when [lbl]  is {{!Asttypes.arg_label.Optional}[Optional l]}
-                      and [exp0] is [None],
-            - [fun ?l:(P = E0) -> CE]
-                     when [lbl]  is {{!Asttypes.arg_label.Optional}[Optional l]}
-                      and [exp0] is [Some E0].
-        *)
-  | Pcl_apply of class_expr * (arg_label * expression) list
+            - [fun P -> CE]          (Simple, None)
+            - [fun ~l:P -> CE]       (Labelled l, None)
+            - [fun ?l:P -> CE]       (Optional l, None)
+            - [fun ?l:(P = E0) -> CE] (Optional l, Some E0)
+         *)
+  | Pcl_apply of class_expr * (apply_flag * expression) list
       (** [Pcl_apply(CE, [(l1,E1) ; ... ; (ln,En)])]
             represents [CE ~l1:E1 ... ~ln:En].
             [li] can be empty (non labeled argument) or start with [?]
@@ -929,6 +923,8 @@ and functor_parameter =
       (** [Named(name, MT)] represents:
             - [(X : MT)] when [name] is [Some X],
             - [(_ : MT)] when [name] is [None] *)
+  | Implicit of string option loc * module_type
+      (** [{X : MT}] *)
 
 and signature = signature_item list
 
@@ -973,6 +969,7 @@ and module_declaration =
      pmd_name: string option loc;
      pmd_type: module_type;
      pmd_attributes: attributes;  (** [... [\@\@id1] [\@\@id2]] *)
+     pmd_implicit: implicit_flag;
      pmd_loc: Location.t;
     }
 (** Values of type [module_declaration] represents [S : MT] *)
@@ -1002,16 +999,14 @@ and module_type_declaration =
 and 'a open_infos =
     {
      popen_expr: 'a;
-     popen_override: override_flag;
+     popen_flag: open_flag;
      popen_loc: Location.t;
      popen_attributes: attributes;
     }
 (** Values of type ['a open_infos] represents:
-    - [open! X] when {{!open_infos.popen_override}[popen_override]}
-                  is {{!Asttypes.override_flag.Override}[Override]}
-    (silences the "used identifier shadowing" warning)
-    - [open  X] when {{!open_infos.popen_override}[popen_override]}
-                  is {{!Asttypes.override_flag.Fresh}[Fresh]}
+    - [open! X]          - popen_flag = Open_all Override
+    - [open  X]          - popen_flag = Open_all Fresh
+    - [open implicit X]  - popen_flag = Open_implicit
 *)
 
 and open_description = Longident.t loc open_infos
@@ -1069,11 +1064,19 @@ and module_expr_desc =
   | Pmod_structure of structure  (** [struct ... end] *)
   | Pmod_functor of functor_parameter * module_expr
       (** [functor(X : MT1) -> ME] *)
-  | Pmod_apply of module_expr * module_expr (** [ME1(ME2)] *)
-  | Pmod_apply_unit of module_expr (** [ME1()] *)
+  | Pmod_apply of module_expr * module_argument
+      (** [ME1(ME2)] or [ME1{ME2}] *)
   | Pmod_constraint of module_expr * module_type  (** [(ME : MT)] *)
   | Pmod_unpack of expression  (** [(val E)] *)
   | Pmod_extension of extension  (** [[%id]] *)
+
+and module_argument =
+  | Pmarg_generative
+      (** [ME()] -- generative functor application *)
+  | Pmarg_applicative of module_expr
+      (** [ME1(ME2)] -- normal functor application *)
+  | Pmarg_implicit of module_expr
+      (** [ME1{ME2}] -- implicit functor application *)
 
 and structure = structure_item list
 
@@ -1147,6 +1150,7 @@ and module_binding =
      pmb_name: string option loc;
      pmb_expr: module_expr;
      pmb_attributes: attributes;
+     pmb_implicit: implicit_flag;
      pmb_loc: Location.t;
     }
 (** Values of type [module_binding] represents [module X = ME] *)

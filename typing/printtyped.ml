@@ -36,8 +36,10 @@ let rec fmt_longident_aux f x =
   match x with
   | Longident.Lident (s) -> fprintf f "%s" s;
   | Longident.Ldot (y, s) -> fprintf f "%a.%s" fmt_longident_aux y.txt s.txt;
-  | Longident.Lapply (y, z) ->
+  | Longident.Lapply (y, z, Nonimplicit) ->
       fprintf f "%a(%a)" fmt_longident_aux y.txt fmt_longident_aux z.txt
+  | Longident.Lapply (y, z, Implicit) ->
+      fprintf f "%a{%a}" fmt_longident_aux y.txt fmt_longident_aux z.txt
 
 let fmt_longident f x = fprintf f "\"%a\"" fmt_longident_aux x.txt
 
@@ -155,6 +157,10 @@ let arg_label i ppf = function
   | Nolabel -> line i ppf "Nolabel\n"
   | Optional s -> line i ppf "Optional \"%s\"\n" s
   | Labelled s -> line i ppf "Labelled \"%s\"\n" s
+
+let arrow_flag i ppf = function
+  | Types.Tarr_arg l -> arg_label i ppf l
+  | Types.Tarr_implicit id -> line i ppf "Implicit \"%s\"\n" (Ident.name id)
 
 let tuple_component_label i ppf = function
   | None -> line i ppf "Label: None\n"
@@ -516,7 +522,7 @@ and binding_op i ppf x =
 
 and function_param i ppf x =
   let p = x.fp_arg_label in
-  arg_label i ppf p;
+  arrow_flag i ppf p;
   match x.fp_kind with
   | Tparam_pat pat ->
       line i ppf "Param_pat%a\n"
@@ -682,7 +688,7 @@ and class_expr i ppf x =
       class_structure i ppf cs;
   | Tcl_fun (l, p, _, ce, _) ->
       line i ppf "Tcl_fun\n";
-      arg_label i ppf l;
+      arrow_flag i ppf l;
       pattern i ppf p;
       class_expr i ppf ce
   | Tcl_apply (ce, l) ->
@@ -768,6 +774,10 @@ and module_type i ppf x =
       module_type i ppf mt2;
   | Tmty_functor (Named (s, _, mt1), mt2) ->
       line i ppf "Tmty_functor \"%a\"\n" fmt_modname s;
+      module_type i ppf mt1;
+      module_type i ppf mt2;
+  | Tmty_functor (Implicit (s, _, mt1), mt2) ->
+      line i ppf "Tmty_functor {%a}\n" fmt_modname s;
       module_type i ppf mt1;
       module_type i ppf mt2;
   | Tmty_with (mt, l) ->
@@ -883,6 +893,10 @@ and module_expr i ppf x =
       module_expr i ppf me;
   | Tmod_functor (Named (s, _, mt), me) ->
       line i ppf "Tmod_functor \"%a\"\n" fmt_modname s;
+      module_type i ppf mt;
+      module_expr i ppf me;
+  | Tmod_functor (Implicit (s, _, mt), me) ->
+      line i ppf "Tmod_functor {%a}\n" fmt_modname s;
       module_type i ppf mt;
       module_expr i ppf me;
   | Tmod_apply (me1, me2, _) ->

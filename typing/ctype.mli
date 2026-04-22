@@ -355,8 +355,8 @@ type filtered_arrow =
 type filter_arrow_failure =
   | Unification_error of Errortrace.unification_error
   | Label_mismatch of
-      { got           : arg_label
-      ; expected      : arg_label
+      { got           : arrow_flag
+      ; expected      : arrow_flag
       ; expected_type : type_expr
       }
   | Not_a_function
@@ -382,6 +382,10 @@ val filter_arity:
   (Env.t * type_expr, filter_arrow_failure) result
 (* A specialized case of unification with [ l:_ -> 'a ] for all arrows *)
 
+val arrows_are_compatible: arrow_flag -> arrow_flag -> bool
+val classic_arrows_are_compatible: arrow_flag -> arrow_flag -> bool
+val modtype_of_tpackage: Env.t -> type_expr -> module_type
+val bind_implicit_arg: Ident.t -> type_expr -> Env.t -> Env.t
 val is_really_poly : Env.t -> type_expr -> bool
 val filter_method: Env.t -> string -> type_expr -> type_expr
         (* A special case of unification (with {m : 'a; 'b}).  Raises
@@ -392,7 +396,7 @@ val filter_method: Env.t -> string -> type_expr -> type_expr
 
     [is_ret_tvar] is [true] if the final return type is a type variable,
     indicating that the list of labels isn't necessarily exhaustive. *)
-val arrow_labels : Env.t -> type_expr -> arg_label list * is_ret_tvar:bool
+val arrow_labels : Env.t -> type_expr -> arrow_flag list * is_ret_tvar:bool
 
 (** An argument in an arrow spine. *)
 type arrow_arg =
@@ -419,7 +423,7 @@ type arrow_ret =
 val arrow_spine
   :  Env.t
   -> type_expr
-  -> (arg_label * arrow_arg) list * arrow_ret
+  -> (arrow_flag * arrow_arg) list * arrow_ret
 
 val occur_in: Env.t -> type_expr -> type_expr -> bool
 val moregeneral: Env.t -> type_expr -> type_expr -> unit
@@ -470,10 +474,20 @@ type class_match_failure =
 val match_class_types:
     ?trace:bool -> Env.t -> class_type -> class_type -> class_match_failure list
         (* Check if the first class type is more general than the second. *)
+type equality_equation = {
+  eq_lhs : type_expr;
+  eq_lhs_params : type_expr list;
+  eq_lhs_path : Path.t;
+  eq_rhs : type_expr;
+}
+
+val with_equality_equations: equality_equation list ref Ident.Map.t -> (unit -> 'a) -> 'a
+
 val equal: Env.t -> bool -> type_expr list -> type_expr list -> unit
         (* [equal env [x1...xn] tau [y1...yn] sigma]
            checks whether the parameterized types
            [/\x1.../\xn.tau] and [/\y1.../\yn.sigma] are equivalent. *)
+val equal': Env.t -> bool -> type_expr list -> type_expr list -> unit
 val eq_package_path : Env.t -> Path.t -> Path.t -> bool
 val is_equal : Env.t -> bool -> type_expr list -> type_expr list -> bool
 val equal_private :
@@ -595,6 +609,8 @@ val unalias: type_expr -> type_expr
 val collapse_conj_params: Env.t -> type_expr list -> unit
         (* Collapse conjunctive types in class parameters *)
 
+val new_declaration:
+        int -> type_expr option -> type_declaration
 val get_current_level: unit -> int
 val wrap_trace_gadt_instances: ?force:bool -> Env.t -> ('a -> 'b) -> 'a -> 'b
 

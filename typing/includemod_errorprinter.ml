@@ -62,8 +62,9 @@ module Context = struct
         Fmt.fprintf ppf " :@ %a" context_mty cxt
   and argname = function
     | Types.Unit -> ""
-    | Types.Named (None, _) -> "_"
-    | Types.Named (Some id, _) -> Ident.name id
+    | Types.Named (None, _) | Types.Implicit (None, _) -> "_"
+    | Types.Named (Some id, _) | Types.Implicit (Some id, _) ->
+        let s = Ident.name id in if s = "*" then "" else s
 
   let alt_pp ppf cxt =
     if cxt = [] then () else
@@ -168,7 +169,7 @@ module Runtime_coercion = struct
             find env (Context.Module id :: ctx) q md.md_type
         | _ -> raise Not_found
         end
-    | Mty_functor(Named (_,mt) as arg,_), InArg :: q ->
+    | Mty_functor((Named (_,mt) | Implicit (_,mt)) as arg,_), InArg :: q ->
         find env (Context.Arg arg :: ctx) q mt
     | Mty_functor(arg, mt), InBody :: q ->
         find env (Context.Body arg :: ctx) q mt
@@ -298,6 +299,7 @@ module With_shorthand = struct
   type functor_param =
     | Unit
     | Named of (Ident.t option * Types.module_type t)
+    | Implicit of (Ident.t option * Types.module_type t)
 
   (** Shorthand generation *)
   type kind =
@@ -357,6 +359,8 @@ module With_shorthand = struct
     | Types.Unit -> Unit
     | Types.Named (from, mty) ->
         Named (from, modtype { ua with item = mty })
+    | Types.Implicit (from, mty) ->
+        Implicit (from, modtype { ua with item = mty })
 
   (** Printing of arguments with shorthands *)
   let pp ppx = function
@@ -368,7 +372,7 @@ module With_shorthand = struct
 
   let definition x = match functor_param x with
     | Unit -> Fmt.dprintf "()"
-    | Named(_,short_mty) ->
+    | Named(_,short_mty) | Implicit(_,short_mty) ->
         match short_mty with
         | Original mty -> dmodtype mty
         | Synthetic {name; item = mty} ->
@@ -377,16 +381,17 @@ module With_shorthand = struct
 
   let param x = match functor_param x with
     | Unit -> Fmt.dprintf "()"
-    | Named (_, short_mty) ->
+    | Named (_, short_mty) | Implicit (_, short_mty) ->
         pp dmodtype short_mty
 
   let qualified_param x = match functor_param x with
     | Unit -> Fmt.dprintf "()"
-    | Named (None, Original (Mty_signature []) ) ->
+    | Named (None, Original (Mty_signature []) )
+    | Implicit (None, Original (Mty_signature []) ) ->
         Fmt.dprintf "(sig end)"
-    | Named (None, short_mty) ->
+    | Named (None, short_mty) | Implicit (None, short_mty) ->
         pp dmodtype short_mty
-    | Named (Some p, short_mty) ->
+    | Named (Some p, short_mty) | Implicit (Some p, short_mty) ->
         Fmt.dprintf "(%s : %t)"
           (Ident.name p) (pp dmodtype short_mty)
 
@@ -426,8 +431,8 @@ module Functor_suberror = struct
   open Err
 
   let param_id x = match x.With_shorthand.item with
-    | Types.Named (Some _ as x,_) -> x
-    | Types.(Unit | Named(None,_)) -> None
+    | Types.Named (Some _ as x,_) | Types.Implicit (Some _ as x,_) -> x
+    | Types.(Unit | Named(None,_) | Implicit(None,_)) -> None
 
 
 (** Print a list of functor parameters with style while adjusting the printing
@@ -526,6 +531,9 @@ module Functor_suberror = struct
         | Types.Named _ ->
             Fmt.dprintf
               "The functor was expected to be generative at this position"
+        | Types.Implicit (_, _) ->
+            Fmt.dprintf
+              "The functor was expected to be implicit at this position"
 
       let patch env got expected =
         Includemod.Functor_inclusion_diff.diff env got expected
@@ -558,7 +566,8 @@ module Functor_suberror = struct
 
     let ok x y =
       let pp_orig_name = match With_shorthand.functor_param y with
-        | With_shorthand.Named (_, Original mty) ->
+        | With_shorthand.Named (_, Original mty)
+        | With_shorthand.Implicit (_, Original mty) ->
             Fmt.dprintf " %t" (dmodtype mty)
         | _ -> ignore
       in
@@ -582,7 +591,7 @@ module Functor_suberror = struct
       let _arg, mty = g.With_shorthand.item in
       let e = match e.With_shorthand.item with
         | Types.Unit -> Fmt.dprintf "()"
-        | Types.Named(_, mty) -> dmodtype mty
+        | Types.Named(_, mty) | Types.Implicit(_, mty) -> dmodtype mty
       in
       Fmt.dprintf
         "Modules do not match:@ @[%t@]@;<1 -2>\

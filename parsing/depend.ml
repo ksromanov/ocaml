@@ -66,7 +66,7 @@ let rec add_path bv ?(p=[]) = function
         prerr_endline "";*)
       add_names free
   | Ldot(l, s) -> add_path bv ~p:(s.txt::p) l.txt
-  | Lapply(l1, l2) -> add_path bv l1.txt; add_path bv l2.txt
+  | Lapply(l1, l2, _) -> add_path bv l1.txt; add_path bv l2.txt
 
 let open_module bv lid =
   match lookup_map lid bv with
@@ -276,6 +276,7 @@ and add_function_param bv param =
   | Pparam_val (_, opte, pat) ->
       add_opt add_expr bv opte;
       add_pattern bv pat
+  | Pparam_implicit (_, _pkg) -> bv
   | Pparam_newtype _ -> bv
 
 and add_function_body bv body =
@@ -331,7 +332,7 @@ and add_modtype bv mty =
       let bv =
         match param with
         | Unit -> bv
-        | Named (id, mty1) ->
+        | Named (id, mty1) | Implicit (id, mty1) ->
           add_modtype bv mty1;
           match id.txt with
           | None -> bv
@@ -469,18 +470,17 @@ and add_module_expr bv modl =
       let bv =
         match param with
         | Unit -> bv
-        | Named (id, mty) ->
+        | Named (id, mty) | Implicit (id, mty) ->
           add_modtype bv mty;
           match id.txt with
           | None -> bv
           | Some name -> String.Map.add name bound bv
       in
       add_module_expr bv modl
-  | Pmod_apply (mod1, mod2) ->
-      add_module_expr bv mod1;
-      add_module_expr bv mod2
-  | Pmod_apply_unit mod1 ->
+  | Pmod_apply(mod1, Pmarg_generative) ->
       add_module_expr bv mod1
+  | Pmod_apply(mod1, Pmarg_applicative mod2) | Pmod_apply(mod1, Pmarg_implicit mod2) ->
+      add_module_expr bv mod1; add_module_expr bv mod2
   | Pmod_constraint(modl, mty) ->
       add_module_expr bv modl; add_modtype bv mty
   | Pmod_unpack(e) ->

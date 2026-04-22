@@ -112,10 +112,10 @@ let rec map_lid sub lid =
       let lid = map_loc_lid sub lid in
       let id = map_loc map_string sub id in
       Ldot (lid, id)
-  | Lapply (lid, lid') ->
+  | Lapply (lid, lid', imp) ->
     let lid = map_loc_lid sub lid in
     let lid' = map_loc_lid sub lid' in
-    Lapply(lid, lid')
+    Lapply(lid, lid', imp)
 
 and map_loc_lid sub loc_lid =
   map_loc map_lid sub loc_lid
@@ -326,6 +326,8 @@ let map_functor_param sub = function
   | Unit -> Unit
   | Named (s, mt) ->
       Named (map_loc map_string_opt sub s, sub.module_type sub mt)
+  | Implicit (s, mt) ->
+      Implicit (map_loc map_string_opt sub s, sub.module_type sub mt)
 
 module MT = struct
   (* Type expressions for the module language *)
@@ -396,6 +398,11 @@ end
 module M = struct
   (* Value expressions for the module language *)
 
+  let argument sub = function
+    | Pmarg_generative -> Pmarg_generative
+    | Pmarg_applicative m -> Pmarg_applicative (sub.module_expr sub m)
+    | Pmarg_implicit m -> Pmarg_implicit (sub.module_expr sub m)
+
   let map sub {pmod_loc = loc; pmod_desc = desc; pmod_attributes = attrs} =
     let open Mod in
     let loc = sub.location sub loc in
@@ -408,9 +415,7 @@ module M = struct
           (map_functor_param sub param)
           (sub.module_expr sub body)
     | Pmod_apply (m1, m2) ->
-        apply ~loc ~attrs (sub.module_expr sub m1) (sub.module_expr sub m2)
-    | Pmod_apply_unit m1 ->
-        apply_unit ~loc ~attrs (sub.module_expr sub m1)
+        apply ~loc ~attrs (sub.module_expr sub m1) (argument sub m2)
     | Pmod_constraint (m, mty) ->
         constraint_ ~loc ~attrs (sub.module_expr sub m)
                     (sub.module_type sub mty)
@@ -456,6 +461,7 @@ module E = struct
             (lab,
              map_opt (sub.expr sub) def,
              sub.pat sub p)
+      | Pparam_implicit (name, pkg) -> Pparam_implicit (name, pkg)
       | Pparam_newtype ty ->
           Pparam_newtype (map_loc map_string sub ty)
     in
@@ -741,10 +747,11 @@ let default_mapper =
     binding_op = E.map_binding_op;
 
     module_declaration =
-      (fun this {pmd_name; pmd_type; pmd_attributes; pmd_loc} ->
+      (fun this {pmd_name; pmd_type; pmd_implicit; pmd_attributes; pmd_loc} ->
          Md.mk
            (map_loc map_string_opt this pmd_name)
            (this.module_type this pmd_type)
+           ~implicit_:pmd_implicit
            ~attrs:(this.attributes this pmd_attributes)
            ~loc:(this.location this pmd_loc)
       );
@@ -768,26 +775,27 @@ let default_mapper =
       );
 
     module_binding =
-      (fun this {pmb_name; pmb_expr; pmb_attributes; pmb_loc} ->
+      (fun this {pmb_name; pmb_expr; pmb_implicit; pmb_attributes; pmb_loc} ->
          Mb.mk (map_loc map_string_opt this pmb_name)
            (this.module_expr this pmb_expr)
+           ~implicit_:pmb_implicit
            ~attrs:(this.attributes this pmb_attributes)
            ~loc:(this.location this pmb_loc)
       );
 
 
     open_declaration =
-      (fun this {popen_expr; popen_override; popen_attributes; popen_loc} ->
+      (fun this {popen_expr; popen_flag; popen_attributes; popen_loc} ->
          Opn.mk (this.module_expr this popen_expr)
-           ~override:popen_override
+           ~flag:popen_flag
            ~loc:(this.location this popen_loc)
            ~attrs:(this.attributes this popen_attributes)
       );
 
     open_description =
-      (fun this {popen_expr; popen_override; popen_attributes; popen_loc} ->
+      (fun this {popen_expr; popen_flag; popen_attributes; popen_loc} ->
          Opn.mk (map_loc_lid this popen_expr)
-           ~override:popen_override
+           ~flag:popen_flag
            ~loc:(this.location this popen_loc)
            ~attrs:(this.attributes this popen_attributes)
       );
@@ -1089,8 +1097,7 @@ module PpxContext = struct
       | "use_threads" ->
           Clflags.use_threads := get_bool payload
       | "use_vmthreads" ->
-          if get_bool payload then
-            raise_errorf "Internal error: vmthreads not supported after 4.09.0"
+          () (* removed in 4.10 *)
       | "recursive_types" ->
           Clflags.recursive_types := get_bool payload
       | "principal" ->

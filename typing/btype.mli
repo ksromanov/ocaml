@@ -282,6 +282,27 @@ val extract_label :
    whether (label, value) was at the head of the list,
    list without the extracted (label, value) *)
 
+(**** Utilities for arrow flags ****)
+
+val arrow_is_simple : arrow_flag -> bool
+val arrow_is_optional : arrow_flag -> bool
+val is_optional_apply : apply_flag -> bool
+val label_name_of_arrow : arrow_flag -> label
+val label_name_of_arrow_raw : arrow_flag -> string
+
+(** Conversions between parse-tree and typed-tree arrow/apply flags. *)
+val tarr_of_parr : Parsetree.arrow_flag -> arrow_flag
+val tapp_of_papp : Parsetree.apply_flag -> apply_flag
+val tarr_of_tapp : apply_flag -> arrow_flag
+val tapp_of_tarr : arrow_flag -> apply_flag
+
+val arrow_is_applicable : arrow_flag -> apply_flag -> bool
+val arrow_is_compatible : arrow_flag -> apply_flag -> bool
+
+val extract_application :
+    arrow_flag -> (apply_flag * 'a) list ->
+    (apply_flag * 'a) * (apply_flag * 'a) list * (apply_flag * 'a) list
+
 (**** Utilities for class types ****)
 
 (* Get the class signature within a class type *)

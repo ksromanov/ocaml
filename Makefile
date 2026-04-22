@@ -121,9 +121,9 @@ typing_SOURCES = \
   typing/shape.mli typing/shape.ml \
   typing/types.mli typing/types.ml \
   typing/data_types.mli typing/data_types.ml \
+  typing/btype.mli typing/btype.ml \
   typing/rawprinttyp.mli typing/rawprinttyp.ml \
   typing/gprinttyp.mli typing/gprinttyp.ml \
-  typing/btype.mli typing/btype.ml \
   typing/oprint.mli typing/oprint.ml \
   typing/subst.mli typing/subst.ml \
   typing/predef.mli typing/predef.ml \
@@ -165,9 +165,11 @@ typing_SOURCES = \
   typing/typeopt.mli typing/typeopt.ml \
   typing/typedecl.mli typing/typedecl.ml \
   typing/value_rec_check.mli typing/value_rec_check.ml \
+  typing/typeimplicit.ml \
   typing/typecore.mli typing/typecore.ml \
   typing/typeclass.mli typing/typeclass.ml \
   typing/typemod.mli typing/typemod.ml \
+  typing/implicitsearch.ml \
 
 lambda_SOURCES = $(addprefix lambda/, \
   debuginfo.mli debuginfo.ml \
@@ -475,6 +477,8 @@ compilerlibs/ocamltoplevel.cmxa: VPATH += toplevel/native
 partialclean::
 	rm -f compilerlibs/ocamltoplevel.cmxa \
 	  compilerlibs/ocamltoplevel.a compilerlibs/ocamltoplevel.lib
+
+parsing/longident.cmo parsing/longident.cmi: parsing/asttypes.cmi
 
 # The configuration file
 

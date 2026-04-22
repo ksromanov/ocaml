@@ -78,6 +78,7 @@ let all_keywords =
     "match", MATCH, always;
     "method", METHOD, v1_0;
     "module", MODULE, always;
+    "implicit", IMPLICIT, always;
     "mutable", MUTABLE, always;
     "new", NEW, v1_0;
     "nonrec", NONREC, v4_2;

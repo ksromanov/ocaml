@@ -86,10 +86,10 @@ let rec map_loc_lid sub lid =
   | Ldot (lid, id) ->
       let lid = { lid with txt = map_loc_lid sub lid.txt } in
       Ldot (map_loc sub lid, map_loc sub id)
-  | Lapply (lid, lid') ->
+  | Lapply (lid, lid', impl) ->
     let lid = { lid with txt = map_loc_lid sub lid.txt } in
     let lid' = { lid' with txt = map_loc_lid sub lid'.txt } in
-     Lapply(map_loc sub lid, map_loc sub lid')
+     Lapply(map_loc sub lid, map_loc sub lid', impl)
 
 let map_loc_lid sub {loc; txt} =
   let txt = map_loc_lid sub txt in
@@ -583,6 +583,7 @@ let class_description sub x =
 let functor_parameter sub = function
   | Unit -> Unit
   | Named (id, s, mtype) -> Named (id, map_loc sub s, sub.module_type sub mtype)
+  | Implicit (id, s, mtype) -> Implicit (id, map_loc sub s, sub.module_type sub mtype)
 
 let module_type sub x =
   let mty_loc = sub.location sub x.mty_loc in

@@ -17,6 +17,16 @@
 
 open Asttypes
 
+(* Arrow / apply flags for implicit module arguments *)
+
+type arrow_flag =
+  | Tarr_arg of arg_label
+  | Tarr_implicit of Ident.t
+
+type apply_flag =
+  | Tapp_arg of arg_label
+  | Tapp_implicit
+
 (* Type expressions for the core language *)
 
 type transient_expr =
@@ -33,7 +43,7 @@ and type_expr = transient_expr
 
 and type_desc =
     Tvar of string option
-  | Tarrow of arg_label * type_expr * type_expr * commutable
+  | Tarrow of arrow_flag * type_expr * type_expr * commutable
   | Ttuple of (string option * type_expr) list
   | Tconstr of Path.t * type_expr list * abbrev_memo ref
   | Tobject of type_expr * (Path.t * type_expr list) option ref
@@ -354,7 +364,7 @@ and type_transparence =
 type class_type =
     Cty_constr of Path.t * type_expr list * class_type
   | Cty_signature of class_signature
-  | Cty_arrow of arg_label * type_expr * class_type
+  | Cty_arrow of arrow_flag * type_expr * class_type
 
 type class_declaration =
   { cty_params: type_expr list;
@@ -393,6 +403,7 @@ type module_type =
 and functor_parameter =
   | Unit
   | Named of Ident.t option * module_type
+  | Implicit of Ident.t option * module_type
 
 and module_presence =
   | Mp_present
@@ -416,6 +427,7 @@ and module_declaration =
     md_attributes: Parsetree.attributes;
     md_loc: Location.t;
     md_uid: Uid.t;
+    md_implicit: Asttypes.implicit_flag;
   }
 
 and modtype_declaration =

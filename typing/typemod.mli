@@ -13,7 +13,7 @@
 (*                                                                        *)
 (**************************************************************************)
 
-(** Type-checking of the module language and typed ast hooks
+(** Type-checking of the module language
 
   {b Warning:} this module is unstable and part of
   {{!Compiler_libs}compiler-libs}.
@@ -42,7 +42,7 @@ val type_implementation:
   Unit_info.t -> Env.t -> Parsetree.structure ->
   Typedtree.implementation
 val type_interface:
-        Env.t -> Parsetree.signature -> Typedtree.signature
+        string -> Env.t -> Parsetree.signature -> Typedtree.signature
 val check_nongen_signature:
         Env.t -> Types.signature -> unit
         (*
@@ -140,3 +140,5 @@ exception Error of Location.t * Env.t * error
 exception Error_forward of Location.error
 
 val report_error: Env.t -> loc:Location.t -> error -> Location.error
+
+

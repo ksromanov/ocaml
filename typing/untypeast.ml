@@ -95,7 +95,7 @@ let rec lident_of_path =
   function
   | Path.Pident id -> Longident.Lident (Ident.name id)
   | Path.Papply (p1, p2) ->
-      Longident.Lapply (noloc_lident_of_path p1, noloc_lident_of_path p2)
+      Longident.Lapply (noloc_lident_of_path p1, noloc_lident_of_path p2, Nonimplicit)
   | Path.Pdot (p, s) | Path.Pextra_ty (p, Pcstr_ty s) ->
       Longident.Ldot (noloc_lident_of_path p, mknoloc s)
   | Path.Pextra_ty (p, _) -> lident_of_path p
@@ -146,14 +146,14 @@ let open_description sub od =
   let loc = sub.location sub od.open_loc in
   let attrs = sub.attributes sub od.open_attributes in
   Opn.mk ~loc ~attrs
-    ~override:od.open_override
+    ~flag:(Open_all od.open_override)
     (snd od.open_expr)
 
 let open_declaration sub od =
   let loc = sub.location sub od.open_loc in
   let attrs = sub.attributes sub od.open_attributes in
   Opn.mk ~loc ~attrs
-    ~override:od.open_override
+    ~flag:(Open_all od.open_override)
     (sub.module_expr sub od.open_expr)
 
 let structure_item sub item =
@@ -456,7 +456,13 @@ let expression sub exp =
                    fp.fp_newtypes
                in
                let pparam_desc =
-                 Pparam_val (fp.fp_arg_label, default_arg, pat)
+                 match fp.fp_arg_label with
+                 | Types.Tarr_arg l ->
+                     Pparam_val (l, default_arg, pat)
+                 | Types.Tarr_implicit _ ->
+                     (* Implicit params are not expected in untypeast;
+                        they do not round-trip through the parsetree. *)
+                     assert false
                in
                { pparam_desc; pparam_loc = fp.fp_loc } :: newtypes)
             params
@@ -467,7 +473,7 @@ let expression sub exp =
           List.fold_right (fun (label, arg) list ->
               match arg with
               | Omitted () -> list
-              | Arg exp -> (label, sub.expr sub exp) :: list
+              | Arg exp -> (Papp_arg label, sub.expr sub exp) :: list
           ) list [])
     | Texp_match (exp, cases, eff_cases, _) ->
       let merged_cases = List.map (sub.case sub) cases
@@ -683,6 +689,7 @@ let functor_parameter sub : functor_parameter -> Parsetree.functor_parameter =
   function
   | Unit -> Unit
   | Named (_, name, mtype) -> Named (name, sub.module_type sub mtype)
+  | Implicit (_, name, mtype) -> Implicit (name, sub.module_type sub mtype)
 
 let module_type (sub : mapper) mty =
   let loc = sub.location sub mty.mty_loc in
@@ -733,9 +740,9 @@ let module_expr (sub : mapper) mexpr =
                 (functor_parameter sub arg, sub.module_expr sub mexpr)
           | Tmod_apply (mexp1, mexp2, _) ->
               Pmod_apply (sub.module_expr sub mexp1,
-                          sub.module_expr sub mexp2)
+                Pmarg_applicative (sub.module_expr sub mexp2))
           | Tmod_apply_unit mexp1 ->
-              Pmod_apply_unit (sub.module_expr sub mexp1)
+              Pmod_apply (sub.module_expr sub mexp1, Pmarg_generative)
           | Tmod_constraint (mexpr, _, Tmodtype_explicit mtype, _) ->
               Pmod_constraint (sub.module_expr sub mexpr,
                 sub.module_type sub mtype)
@@ -757,15 +764,20 @@ let class_expr sub cexpr =
           List.map (sub.typ sub) tyl)
     | Tcl_structure clstr -> Pcl_structure (sub.class_structure sub clstr)
 
-    | Tcl_fun (label, pat, _pv, cl, _partial) ->
-        Pcl_fun (label, None, sub.pat sub pat, sub.class_expr sub cl)
+    | Tcl_fun (Types.Tarr_arg label, pat, _pv, cl, _partial) ->
+        Pcl_fun (Parr_arg label, None, sub.pat sub pat, sub.class_expr sub cl)
+    | Tcl_fun (Types.Tarr_implicit _, pat, _pv, cl, _partial) ->
+        let name = match pat.pat_desc with
+          | Tpat_var (_, {txt}, _) -> txt
+          | _ -> "_" in
+        Pcl_fun (Parr_implicit name, None, sub.pat sub pat, sub.class_expr sub cl)
 
     | Tcl_apply (cl, args) ->
         Pcl_apply (sub.class_expr sub cl,
           List.fold_right (fun (label, expo) list ->
               match expo with
               | Omitted () -> list
-              | Arg exp -> (label, sub.expr sub exp) :: list
+              | Arg exp -> (Papp_arg label, sub.expr sub exp) :: list
           ) args [])
 
     | Tcl_let (rec_flat, bindings, _ivars, cl) ->
@@ -792,7 +804,7 @@ let class_type sub ct =
     | Tcty_constr (_path, lid, list) ->
         Pcty_constr (map_loc sub lid, List.map (sub.typ sub) list)
     | Tcty_arrow (label, ct, cl) ->
-        Pcty_arrow (label, sub.typ sub ct, sub.class_type sub cl)
+        Pcty_arrow (Parr_arg label, sub.typ sub ct, sub.class_type sub cl)
     | Tcty_open (od, e) ->
         Pcty_open (sub.open_description sub od, sub.class_type sub e)
   in
@@ -826,7 +838,7 @@ let core_type sub ct =
       Ttyp_any -> Ptyp_any
     | Ttyp_var s -> Ptyp_var s
     | Ttyp_arrow (label, ct1, ct2) ->
-        Ptyp_arrow (label, sub.typ sub ct1, sub.typ sub ct2)
+        Ptyp_arrow (Parr_arg label, sub.typ sub ct1, sub.typ sub ct2)
     | Ttyp_tuple list ->
         Ptyp_tuple (List.map (fun (l, typ) -> l, sub.typ sub typ) list)
     | Ttyp_constr (_path, lid, list) ->
@@ -895,7 +907,7 @@ let remove_fun_self exp =
   match exp with
   | { exp_desc =
         Texp_function
-          ({fp_arg_label = Nolabel; fp_kind = Tparam_pat pat} :: params, body)
+          ({fp_arg_label = Tarr_arg Nolabel; fp_kind = Tparam_pat pat} :: params, body)
     }
     when is_self_pat pat ->
     (match params, body with

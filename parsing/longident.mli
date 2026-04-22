@@ -28,7 +28,7 @@ open Location
 type t =
     Lident of string
   | Ldot of t loc * string loc
-  | Lapply of t loc * t loc
+  | Lapply of t loc * t loc * Asttypes.implicit_flag
 
 (** [same t t'] compares the longidents [t] and [t'] without taking locations
     into account. *)
