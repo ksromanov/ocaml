@@ -291,7 +291,7 @@ type exn += private Foobar
 Line 2, characters 14-20:
 2 | let _ = raise Foobar
                   ^^^^^^
-Error: Cannot use private constructor "Foobar" to create values of type "exn"
+Error: Cannot create values of the private type "exn"
 |}]
 
 

@@ -43,6 +43,7 @@
                         structure_item (shortcut_ext_attr.ml[12,222+7]..[12,222+29]) ghost
                           Pstr_module
                           "M" (shortcut_ext_attr.ml[12,222+24]..[12,222+25])
+                            pmb_implicit =
                             attribute "foo"
                               []
                             module_expr (shortcut_ext_attr.ml[12,222+28]..[12,222+29])
@@ -341,8 +342,7 @@
           class_expr (shortcut_ext_attr.ml[35,789+12]..[46,1049+5])
             attribute "foo"
               []
-            Pcl_fun
-            Nolabel
+            Pcl_fun 
             None
             pattern (shortcut_ext_attr.ml[35,789+12]..[35,789+13])
               Ppat_var "x" (shortcut_ext_attr.ml[35,789+12]..[35,789+13])
@@ -536,6 +536,7 @@
   structure_item (shortcut_ext_attr.ml[64,1353+0]..[67,1409+22])
     Pstr_module
     "M" (shortcut_ext_attr.ml[64,1353+7]..[64,1353+8])
+      pmb_implicit =
       module_expr (shortcut_ext_attr.ml[65,1364+16]..[67,1409+22])
         attribute "foo"
           []
@@ -735,6 +736,7 @@
       structure_item (shortcut_ext_attr.ml[88,1782+0]..[88,1782+22]) ghost
         Pstr_module
         "M" (shortcut_ext_attr.ml[88,1782+17]..[88,1782+18])
+          pmb_implicit =
           attribute "foo"
             []
           module_expr (shortcut_ext_attr.ml[88,1782+21]..[88,1782+22])
@@ -747,6 +749,7 @@
         Pstr_recmodule
         [
           "M" (shortcut_ext_attr.ml[89,1805+21]..[89,1805+22])
+            pmb_implicit =
             attribute "foo"
               []
             module_expr (shortcut_ext_attr.ml[89,1805+23]..[89,1805+30])
@@ -756,6 +759,7 @@
               module_type (shortcut_ext_attr.ml[89,1805+25]..[89,1805+26])
                 Pmty_ident "S" (shortcut_ext_attr.ml[89,1805+25]..[89,1805+26])
           "M" (shortcut_ext_attr.ml[90,1836+10]..[90,1836+11])
+            pmb_implicit =
             attribute "foo"
               []
             module_expr (shortcut_ext_attr.ml[90,1836+12]..[90,1836+19])
@@ -921,11 +925,13 @@
                 Psig_recmodule
                 [
                   "M" (shortcut_ext_attr.ml[108,2141+23]..[108,2141+24])
+                    pmd_implicit =
                     attribute "foo"
                       []
                     module_type (shortcut_ext_attr.ml[108,2141+27]..[108,2141+28])
                       Pmty_ident "S" (shortcut_ext_attr.ml[108,2141+27]..[108,2141+28])
                   "M" (shortcut_ext_attr.ml[109,2170+12]..[109,2170+13])
+                    pmd_implicit =
                     attribute "foo"
                       []
                     module_type (shortcut_ext_attr.ml[109,2170+16]..[109,2170+17])

@@ -93,6 +93,7 @@
   structure_item (attributes.ml[24,313+0]..[33,420+7])
     Pstr_module
     "M" (attributes.ml[24,313+7]..[24,313+8])
+      pmb_implicit =
       attribute "foo"
         []
       module_expr (attributes.ml[24,313+11]..[32,410+3])
@@ -224,6 +225,7 @@
   structure_item (attributes.ml[51,652+0]..[51,652+27])
     Pstr_module
     "_" (attributes.ml[51,652+7]..[51,652+8])
+      pmb_implicit =
       module_expr (attributes.ml[51,652+11]..[51,652+27])
         Pmod_constraint
         module_expr (attributes.ml[51,652+12]..[51,652+15])
@@ -235,6 +237,7 @@
   structure_item (attributes.ml[53,681+0]..[53,681+45])
     Pstr_module
     "_" (attributes.ml[53,681+7]..[53,681+8])
+      pmb_implicit =
       module_expr (attributes.ml[53,681+11]..[53,681+45])
         Pmod_constraint
         module_expr (attributes.ml[53,681+12]..[53,681+15])
@@ -320,8 +323,7 @@
               core_type (attributes.ml[59,812+19]..[59,812+31])
                 attribute "foo"
                   []
-                Ptyp_arrow
-                Nolabel
+                Ptyp_arrow 
                 core_type (attributes.ml[59,812+19]..[59,812+23])
                   Ptyp_constr "unit" (attributes.ml[59,812+19]..[59,812+23])
                   []

@@ -291,7 +291,7 @@ let a2 = M_S.A 20
 Line 1, characters 9-17:
 1 | let a2 = M_S.A 20
              ^^^^^^^^
-Error: Cannot use private constructor "A" to create values of type "foo"
+Error: Cannot create values of the private type "foo"
 |}]
 
 (* Signatures must respect the type of the constructor *)

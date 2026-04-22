@@ -42,8 +42,7 @@
       expression 
         Pexp_ident "~+" 
       [
-        <arg>
-        Nolabel
+        <arg> 
           expression 
             Pexp_constant
             constant 
@@ -56,8 +55,7 @@
       expression 
         Pexp_ident "~-" 
       [
-        <arg>
-        Nolabel
+        <arg> 
           expression 
             attribute "foo"
               []
@@ -72,8 +70,7 @@
       expression 
         Pexp_ident "~+" 
       [
-        <arg>
-        Nolabel
+        <arg> 
           expression 
             attribute "foo"
               []
@@ -88,8 +85,7 @@
       expression 
         Pexp_ident "~-" 
       [
-        <arg>
-        Nolabel
+        <arg> 
           expression 
             attribute "foo"
               []
@@ -104,8 +100,7 @@
       expression 
         Pexp_ident "~+" 
       [
-        <arg>
-        Nolabel
+        <arg> 
           expression 
             attribute "foo"
               []
@@ -120,8 +115,7 @@
       expression 
         Pexp_ident "~-." 
       [
-        <arg>
-        Nolabel
+        <arg> 
           expression 
             attribute "foo"
               []
@@ -136,8 +130,7 @@
       expression 
         Pexp_ident "~+." 
       [
-        <arg>
-        Nolabel
+        <arg> 
           expression 
             attribute "foo"
               []
@@ -152,8 +145,7 @@
       expression 
         Pexp_ident "~+" 
       [
-        <arg>
-        Nolabel
+        <arg> 
           expression 
             attribute "foo"
               []

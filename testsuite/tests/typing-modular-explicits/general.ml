@@ -241,7 +241,7 @@ Line 3, characters 10-22:
               ^^^^^^^^^^^^
 Error: The function applied to this argument has type
          b:(module M : Typ) -> M.t
-This argument cannot be applied with label "~c"
+This argument cannot be applied with label ~c
 |}]
 
 (** From here we test possible expressions for the module argument. *)

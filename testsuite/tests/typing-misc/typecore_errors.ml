@@ -271,7 +271,7 @@ Line 4, characters 13-14:
 4 | let y = f ~y:1
                  ^
 Error: The function applied to this argument has type x:int -> int
-This argument cannot be applied with label "~y"
+This argument cannot be applied with label ~y
 |}]
 
 let g f = f ~x:0 ~y:0; f ~y:0 ~x:0

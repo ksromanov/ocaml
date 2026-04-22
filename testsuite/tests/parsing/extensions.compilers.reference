@@ -32,14 +32,12 @@
                 expression (extensions.ml[10,176+11]..[10,176+12])
                   Pexp_ident "+" (extensions.ml[10,176+11]..[10,176+12])
                 [
-                  <arg>
-                  Nolabel
+                  <arg> 
                     expression (extensions.ml[10,176+10]..[10,176+11])
                       Pexp_constant
                       constant (extensions.ml[10,176+10]..[10,176+11])
                         PConst_int (2,None)
-                  <arg>
-                  Nolabel
+                  <arg> 
                     expression (extensions.ml[10,176+12]..[10,176+13])
                       Pexp_constant
                       constant (extensions.ml[10,176+12]..[10,176+13])
@@ -74,6 +72,7 @@
       structure_item (extensions.ml[12,224+7]..[12,224+24])
         Pstr_module
         "M" (extensions.ml[12,224+14]..[12,224+15])
+          pmb_implicit =
           module_expr (extensions.ml[12,224+18]..[12,224+24])
             Pmod_extension "bar"
             []
@@ -163,8 +162,7 @@
         core_type (extensions.ml[16,344+22]..[16,344+37])
           Ptyp_extension "foo"
           core_type (extensions.ml[16,344+29]..[16,344+35])
-            Ptyp_arrow
-            Nolabel
+            Ptyp_arrow 
             core_type (extensions.ml[16,344+29]..[16,344+30])
               Ptyp_constr "t" (extensions.ml[16,344+29]..[16,344+30])
               []
@@ -198,12 +196,10 @@
         expression (extensions.ml[19,418+22]..[19,418+23])
           Pexp_ident ">" (extensions.ml[19,418+22]..[19,418+23])
         [
-          <arg>
-          Nolabel
+          <arg> 
             expression (extensions.ml[19,418+20]..[19,418+21])
               Pexp_ident "y" (extensions.ml[19,418+20]..[19,418+21])
-          <arg>
-          Nolabel
+          <arg> 
             expression (extensions.ml[19,418+24]..[19,418+25])
               Pexp_constant
               constant (extensions.ml[19,418+24]..[19,418+25])
