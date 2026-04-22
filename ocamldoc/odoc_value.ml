@@ -67,7 +67,7 @@ let parameter_list_from_arrows typ =
       Tarrow (l, t1, t2, _) ->
         (l, t1) :: (iter t2)
     | Tfunctor (l, _, pack, t2) ->
-        (l, Ctype.newty (Tpackage pack)) :: (iter t2)
+        (Tarr_arg l, Ctype.newty (Tpackage pack)) :: (iter t2)
     | Tpoly (texp, _) -> iter texp
     | Tvar _
     | Ttuple _
@@ -87,20 +87,18 @@ let parameter_list_from_arrows typ =
   iter typ
 
 let dummy_parameter_list typ =
-  let normal_name = Odoc_misc.label_name in
   let liste_param = parameter_list_from_arrows typ in
   let rec iter (label, t) =
     let open Types in
     match get_desc t with
     | Ttuple l ->
-        let open Asttypes in
-        if label = Nolabel then
+        if label = Tarr_arg Asttypes.Nolabel then
           Odoc_parameter.Tuple
-            (List.map (fun t2 -> iter (Nolabel, t2)) (List.map snd l), t)
+            (List.map (fun t2 -> iter (Tarr_arg Asttypes.Nolabel, t2)) (List.map snd l), t)
         else
           (* if there is a label, then we don't want to decompose the tuple *)
           Odoc_parameter.Simple_name
-            { Odoc_parameter.sn_name = normal_name label ;
+            { Odoc_parameter.sn_name = Btype.label_name_of_arrow_raw label ;
               Odoc_parameter.sn_type = t ;
               Odoc_parameter.sn_text = None }
     | Tlink t2 ->
@@ -109,7 +107,7 @@ let dummy_parameter_list typ =
         assert false
     | _ ->
         Odoc_parameter.Simple_name
-          { Odoc_parameter.sn_name = normal_name label ;
+          { Odoc_parameter.sn_name = Btype.label_name_of_arrow_raw label ;
              Odoc_parameter.sn_type = t ;
             Odoc_parameter.sn_text = None }
   in

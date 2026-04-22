@@ -1641,7 +1641,8 @@ module Analyser =
       | Parsetree.Pmty_functor (param2, module_type2) ->
           (
            let loc = match param2 with Parsetree.Unit -> Location.none
-                     | Parsetree.Named (_, pmty) -> pmty.Parsetree.pmty_loc in
+                     | Parsetree.Named (_, pmty)
+                     | Parsetree.Implicit (_, pmty) -> pmty.Parsetree.pmty_loc in
            let loc_start = Loc.start loc in
            let loc_end = Loc.end_ loc in
            let mp_type_code = get_string_of_file loc_start loc_end in
@@ -1649,7 +1650,8 @@ module Analyser =
              Types.Mty_functor (param, body_module_type) ->
                let mp_name, mp_kind =
                  match param2, param with
-                   Parsetree.Named (_, pmty), Types.Named (Some ident, mty) ->
+                   Parsetree.Named (_, pmty), Types.Named (Some ident, mty)
+                 | Parsetree.Implicit (_, pmty), Types.Implicit (Some ident, mty) ->
                      Name.from_ident ident,
                      analyse_module_type_kind env current_module_name pmty mty
                  | _ -> "*", Module_type_struct []
@@ -1660,7 +1662,8 @@ module Analyser =
                    mp_type =
                      (match param with
                       | Types.Unit -> None
-                      | Types.Named (_, mty) ->
+                      | Types.Named (_, mty)
+                      | Types.Implicit (_, mty) ->
                         Some (Odoc_env.subst_module_type env mty));
                    mp_type_code = mp_type_code ;
                    mp_kind = mp_kind ;
@@ -1740,13 +1743,15 @@ module Analyser =
            match sig_module_type with
              Types.Mty_functor (param, body_module_type) ->
                let loc = match param2 with Parsetree.Unit -> Location.none
-                     | Parsetree.Named (_, pmty) -> pmty.Parsetree.pmty_loc in
+                     | Parsetree.Named (_, pmty)
+                     | Parsetree.Implicit (_, pmty) -> pmty.Parsetree.pmty_loc in
                let loc_start = Loc.start loc in
                let loc_end = Loc.end_ loc in
                let mp_type_code = get_string_of_file loc_start loc_end in
                let mp_name, mp_kind =
                  match param2, param with
-                   Parsetree.Named (_, pmty), Types.Named (Some ident, mty) ->
+                   Parsetree.Named (_, pmty), Types.Named (Some ident, mty)
+                 | Parsetree.Implicit (_, pmty), Types.Implicit (Some ident, mty) ->
                      Name.from_ident ident,
                      analyse_module_type_kind env current_module_name pmty mty
                  | _ -> "*", Module_type_struct []
@@ -1757,7 +1762,8 @@ module Analyser =
                    mp_type =
                      (match param with
                       | Types.Unit -> None
-                      | Types.Named(_, mty) -> Some (Odoc_env.subst_module_type env mty));
+                      | Types.Named(_, mty)
+                      | Types.Implicit(_, mty) -> Some (Odoc_env.subst_module_type env mty));
                    mp_type_code = mp_type_code ;
                    mp_kind = mp_kind ;
                  }
@@ -1823,21 +1829,17 @@ module Analyser =
       | (Parsetree.Pcty_arrow (parse_label, _, pclass_type), Types.Cty_arrow (label, type_expr, class_type)) ->
           (* label = string. In signature, there is no parameter names inside tuples *)
           (* if label = "", no label . Here we have the information to determine if a label is explicit or not. *)
-          if parse_label = label then
+          let _ = parse_label in
             (
              let new_param = Simple_name
                  {
-                   sn_name = Btype.label_name label ;
+                   sn_name = Btype.label_name_of_arrow_raw label ;
                    sn_type = Odoc_env.subst_type env type_expr ;
                    sn_text = None ; (* will be updated when the class will be created *)
                  }
              in
              let (l, k) = analyse_class_kind env current_class_name last_pos pclass_type class_type in
              ( (new_param :: l), k )
-            )
-          else
-            (
-             raise (Failure "Parsetree.Pcty_arrow (parse_label, _, pclass_type), different labels")
             )
 
       | _ ->

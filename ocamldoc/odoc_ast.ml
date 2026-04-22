@@ -1732,9 +1732,9 @@ module Analyser =
            let kind = m_base2.m_kind in
            { m_base with m_kind = Module_functor (param, kind) }
 
-      | (Parsetree.Pmod_apply (p_module_expr1, p_module_expr2),
+      | (Parsetree.Pmod_apply (p_module_expr1, (Parsetree.Pmarg_applicative p_module_expr2 | Parsetree.Pmarg_implicit p_module_expr2)),
          Typedtree.Tmod_apply (tt_module_expr1, tt_module_expr2, _))
-      | (Parsetree.Pmod_apply (p_module_expr1, p_module_expr2),
+      | (Parsetree.Pmod_apply (p_module_expr1, (Parsetree.Pmarg_applicative p_module_expr2 | Parsetree.Pmarg_implicit p_module_expr2)),
          Typedtree.Tmod_constraint
            ({ Typedtree.mod_desc = Typedtree.Tmod_apply (tt_module_expr1, tt_module_expr2, _)}, _,
             _, _)
@@ -1757,9 +1757,9 @@ module Analyser =
           in
           { m_base with m_kind = Module_apply (m1.m_kind, m2.m_kind) }
 
-      | (Parsetree.Pmod_apply_unit p_module_expr1,
+      | (Parsetree.Pmod_apply (p_module_expr1, Parsetree.Pmarg_generative),
          Typedtree.Tmod_apply_unit tt_module_expr1)
-      | (Parsetree.Pmod_apply_unit p_module_expr1,
+      | (Parsetree.Pmod_apply (p_module_expr1, Parsetree.Pmarg_generative),
          Typedtree.Tmod_constraint
            ({ Typedtree.mod_desc = Typedtree.Tmod_apply_unit tt_module_expr1}, _,
             _, _)

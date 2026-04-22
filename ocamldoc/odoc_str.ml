@@ -135,12 +135,12 @@ let string_of_class_params c =
         Printf.bprintf b "%s%s%s%s -> "
           (
            match label with
-             Asttypes.Nolabel -> ""
-           | s -> Asttypes.string_of_label s ^":"
+             Types.Tarr_arg Asttypes.Nolabel -> ""
+           | s -> Btype.label_name_of_arrow_raw s ^":"
           )
           (if parent then "(" else "")
           (Odoc_print.string_of_type_expr
-             (if Odoc_misc.is_optional label then
+             (if Btype.arrow_is_optional label then
                Odoc_misc.remove_option t
              else
                t
